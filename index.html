@@ -198,7 +198,16 @@ a{color:var(--brand-600);text-decoration:none}
 .pgtab .x{font-size:14px;color:var(--text-4);line-height:1}
 .pgtab .x:hover{color:var(--danger)}
 .content{padding:12px;flex:1;min-width:0}
+.imp-drop{margin:2px 0 4px;padding:22px 16px;border:1.5px dashed var(--brand-line-strong);border-radius:var(--r-lg);background:var(--brand-50);text-align:center;color:var(--text-3);cursor:pointer;transition:border-color .14s,background .14s}
+.imp-drop:hover{border-color:var(--brand-600);background:#EAF5EE}
+.imp-drop.over{border-color:var(--brand-600);background:#E1F3E9}
+.imp-rov{color:#DC2626}
+.imp-req{color:#B45309}
 </style>
+<!-- 表格库 ExcelJS：让「导入货品信息」可直接读 .xlsx / .xls，且能生成真正带
+     红字 / 必填标注 / 列锁定的 .xlsx 模板（免费版即可写样式与单元格保护）。
+     离线打开时 ExcelJS 未定义，impFile / impTemplate 会自动降级为文本 / CSV 处理 -->
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body data-page-node-id="fyrEmlZEyJQ47UGkJ6BjLq">
 <style>
@@ -778,6 +787,10 @@ tr.is-void td:first-child{box-shadow:inset 3px 0 0 #DC2626}
 .tch .dot.out{fill:#fff;stroke:#B9CCC2;stroke-width:1.6}
 .tch .cutline{stroke:#94A3B8;stroke-width:1;stroke-dasharray:3 3;opacity:.5}
 .tch-lg i.k3{border-top:1.4px dashed #C7D6CD}
+/* 被标记为「异常调价」的点：红色空心，一眼能看出这条记录已排除出统计 */
+.tch .dot.abn{fill:#fff;stroke:#B91C1C;stroke-width:2.4}
+.tch .dot.abn.cur{fill:#7F1D1D}
+.tch-lg i.k4{border-top:1.4px dashed #B91C1C;opacity:.9}
 /* 均价口径配置弹层里的选项卡 */
 .avgopts{display:flex;flex-direction:column;gap:8px}
 .avgopt{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--line-2);
@@ -1031,7 +1044,7 @@ const NAV = [
   ]},
   /* ---------- 交易中心 ---------- */
   {g:'交易中心', m:'商品与价格', id:'B03', ic:I.box,   bd:'sum', subs:[
-    ['B03','门店商品',''],
+    ['B03','供货价格维护',''],
     ['B06','货品价格趋势',''], ['B07','批量调货品价格','']
   ]},
   {g:'交易中心', m:'询价与报价', id:'C01', ic:I.quote, bd:'sum', subs:[
@@ -1074,7 +1087,7 @@ const NAV_OPEN = new Set(['A03']);
    只在 shell() 渲染时求值，所以设一次价 / 恢复一个 SKU，徽标立刻跟着变。
    ============================================================ */
 const NAVCNT = {
-  /* 门店商品现在是唯一的待办落点（原「我的供货清单」已合并进来）：
+  /* 供货价格维护现在是唯一的待办落点（原「我的供货清单」已合并进来）：
      门店推送过来、还没给价的 SKU —— 这才是真正压在你手上的活。
      口径必须与 liveCat() 里「待设价」完全一致（排除门店下架 / 删除、排除临时停售），
      否则会出现「徽标 30、点进去待设价 28」—— 数字对不上，比没有数字更糟。 */
@@ -1899,7 +1912,12 @@ def('C03','报价单编辑','询价与报价', ()=>{
   const nNo  = QUOTE.length - nOk;            // 选了「不可供」的行
   const total = oks.reduce((s,r)=>s+r.q*(parseFloat(r.price)||0),0);
 
-  const rows = QUOTE.map((r,i)=>{
+  /* 商品报价行排序：可供的排前面、不可供的置后，组内保持原顺序 ——
+     在 C03 把某行切到「不可供」后 go('C03') 会重渲染，这一行立即挪到末尾，无需再刷新 */
+  const qIdxs = QUOTE.map((r,i)=>i).sort((a,b)=>
+    ((QUOTE[a].avail==='不可供'?1:0) - (QUOTE[b].avail==='不可供'?1:0)) || a - b);
+  const rows = qIdxs.map(disp=>{
+    const i = disp, r = QUOTE[i];
     const okr = qOk(r);
     const refDelta = ((r.price - r.ref)/r.ref*100);
     const dTag = Math.abs(refDelta) < 0.001 ? '<span class="hint">持平</span>'
@@ -3436,7 +3454,7 @@ function nowStamp(){
      type   'SKU 下架' | 'SKU 删除' | '商品下架'（整商品，牵连旗下全部 SKU）
      prev   失效前的供应端状态 —— 门店重新上架后按它自动恢复
      owed   仍有未完成订单行数 —— 失效不影响已承诺订单，必须发货
-     back   1 = 门店已重新上架，下一条推送 / 下一次手动刷新自动恢复
+     back   1 = 门店已重新上架，下一条推送自动恢复
    ------------------------------------------------------------
    两条不变量：
      ① 只打标记、不物理删除 —— 历史订单、验收单、对账、发票都要能追溯回来；
@@ -3463,7 +3481,7 @@ function delCount(){ return delList().length; }
 /* 兼容旧调用：失效 = 下架，删除不算失效 */
 function voidList(){ return offList(); }
 function voidCount(){ return offList().length; }
-/* 待自动恢复：门店已重新上架、等下一条推送或手动刷新 */
+/* 待自动恢复：门店已重新上架、等下一条推送 */
 function backCount(){ return offList().filter(c=>VOID[c.sid].back).length; }
 
 /* 「已设价」由货品价格算出来，不信任手写标记
@@ -3484,7 +3502,7 @@ function goodsAll(){
       新推过来还没设价的那批就不见了，容易以为没收到。
    三种货不进来，都因为「现在供不了」：
      门店下架 / 删除 → 不是我的货了（且数据只做逻辑删除，历史单据仍可追溯）
-     临时停售        → 我主动暂停的，恢复在售后才回到清单（在「门店商品 · 临时停售」里管）
+     临时停售        → 我主动暂停的，恢复在售后才回到清单（在「供货价格维护 · 临时停售」里管）
    注意不能用 liveCat()：那个只摘「门店删除」，「门店下架」和「临时停售」都还在里面。
    也不复用 goodsAll()：B06 价格趋势 / B07 批量调价 / 直采都要「得着价的货」，
    混进没价的会被 ¥NaN 带崩，所以这里单独一支。 */
@@ -3580,6 +3598,46 @@ function resumeDo(sid){
   go('B03');
   toast('已恢复在售 · 该货品重新参与询价、直采与发货');
 }
+
+/* 批量临时停售：作用于「已设价」标签下、当前筛选条件下的「全部」货品
+   —— 不是当前页那几条，是筛选后的全量；分页只影响展示，不影响这一批的覆盖范围 */
+function b03BatchSuspendAsk(){
+  const list = b03List('priced');
+  if(!list.length){ toast('当前筛选条件下没有可停售的已设价货品', 'err'); return; }
+  const n = list.length;
+  modal('批量临时停售',
+   `<div style="font-size:13px;color:var(--text-2);line-height:1.85;margin-bottom:16px;padding:12px 14px;background:#F6F8F9;border-radius:var(--r-md)">
+      将对「已设价」标签下、<b>当前筛选条件</b>匹配的 <b style="color:var(--danger)">${n}</b> 个货品执行临时停售。<br>
+      停售期间它们<b>不进新的询价单</b>，已提交的报价与在途订单照常履约；随时可「恢复在售」，记录一直都在。
+    </div>
+    <div class="field"><label><span class="req">*</span>为什么停售</label>
+      <select class="select" id="bsp-why">
+        <option>货源临时中断</option>
+        <option>季节性停售</option>
+        <option>规格不符</option>
+        <option>毛利太低</option>
+        <option>产能不足</option>
+        <option>不是我的货</option>
+      </select>
+      <div class="hint">运营能看到这个原因，会据此判断要不要改 SKU</div></div>
+    <div class="field" style="margin-top:12px"><label>补充说明（选填）</label>
+      <input class="input" id="bsp-note" placeholder="如：产地断货两周，恢复后重新报价">
+      <div class="hint">只有你自己和运营看得到，不会出现在任何单据上</div></div>`,
+   `<button class="btn btn-default" onclick="closeModal()">取消</button>
+    <button class="btn btn-danger" onclick="b03BatchSuspendDo()">确认停售 ${n} 个</button>`);
+}
+function b03BatchSuspendDo(){
+  const w = document.getElementById('bsp-why'), n = document.getElementById('bsp-note');
+  const why = w ? w.value : '', nt = n ? n.value : '';
+  const list = b03List('priced');
+  let done = 0;
+  list.forEach(c=>{ if(!SUSPEND[c.sid]){ SUSPEND[c.sid] = {at: nowStamp(), why, note: nt}; done++; } });
+  closeModal();
+  B03TAB = 'suspend';
+  go('B03');
+  toast(done ? ('已批量临时停售 '+done+' 个货品 · 随时可以恢复在售')
+             : '这些货品已经处于停售状态，无需重复停售');
+}
 /* 别名只有一条改法：进「货品编辑」(B02) 改完随 b02Save 一起提交。
    原 B01 的行内别名输入框已随 B01 删除，对应的 aliasSet() 一并下线 ——
    留着它等于留一个绕开保存校验的后门。 */
@@ -3657,6 +3715,37 @@ Object.keys(CLAIM).forEach(sid=>{
   pts[n-1].by = '王强';
   PRICE_HIST[sid] = pts;
 });
+/* 异常调价标记：被标记的改价记录不计入均价及一切统计（最高优先级）。
+   以 sid 下「日期|价格」组合为键持久化到 localStorage，刷新后标记仍在 ——
+   演示数据按 SKU 确定性生成，同一组合每次打开都一致，索引可跨刷新复用。 */
+const PRICE_ABN = {};
+(function(){
+  try{
+    const raw = localStorage.getItem('wb_price_abn');
+    if(raw){ const o = JSON.parse(raw); for(const k in o) if(o[k] && o[k].length) PRICE_ABN[k] = o[k]; }
+  }catch(e){}
+  Object.keys(PRICE_HIST).forEach(sid=>{
+    const set = PRICE_ABN[sid]; if(!set) return;
+    PRICE_HIST[sid].forEach(x=>{ if(set.indexOf(x.at+'|'+x.p) !== -1) x.abn = true; });
+  });
+})();
+function savePriceAbn(){
+  try{ localStorage.setItem('wb_price_abn', JSON.stringify(PRICE_ABN)); }catch(e){}
+}
+/* 在「变更明细」里标记 / 取消标记某次改价为异常；标记后从均价与所有统计中排除 */
+function toggleAbn(sid, idx){
+  const h = PRICE_HIST[sid]; if(!h || !h[idx]) return;
+  const x = h[idx], key = x.at + '|' + x.p;
+  x.abn = !x.abn;
+  const set = PRICE_ABN[sid] || (PRICE_ABN[sid] = []);
+  const i = set.indexOf(key);
+  if(x.abn){ if(i === -1) set.push(key); }
+  else if(i !== -1) set.splice(i, 1);
+  if(!set.length) delete PRICE_ABN[sid];
+  savePriceAbn();
+  priceTrend(sid);   /* 原地重渲染弹窗：均价、偏离、趋势线、明细同步刷新 */
+  toast(x.abn ? '已标记为异常调价 · 已从均价等统计中排除' : '已取消异常标记');
+}
 /* 取某 SKU 的价格变更历史（无记录则回退到当前货品价格单点） */
 function priceHist(sid){
   if(PRICE_HIST[sid] && PRICE_HIST[sid].length) return PRICE_HIST[sid];
@@ -3698,8 +3787,15 @@ function histIn(sid, k){
 /* 均价估算 = 口径内变更价的简单平均，供定价参考。
    口径内一条记录都没有时返回 0，调用方显示「—」—— 不回退到全部历史：
    一回退，「时间范围」这个配置就变成了装饰，用户永远不知道自己的设置生没生效。 */
+/* 异常调价：被标记的改价记录不计入均价及一切统计维度（最高优先级）。
+   排除优先于时间口径 —— 口径内但被标异常的，照常排除，不参与均值。 */
+function isAbn(x){ return !!(x && x.abn); }
+/* 真正参与统计的样本 = 口径内 且 非异常；avg / 偏离 / 趋势统计都从这里取 */
+function histStat(sid, k){
+  return histIn(sid, k).filter(x => !isAbn(x));
+}
 function priceAvg(sid, k){
-  const h = histIn(sid, k);
+  const h = histStat(sid, k);
   return h.length ? h.reduce((s,x)=>s+x.p,0)/h.length : 0;
 }
 /* 改价时记入历史 */
@@ -4308,7 +4404,7 @@ def('A09','缺货与差异分析','数据看板', ()=>{
 });
 /* ============================================================
    共享：形态标签（毛菜 / 净菜 / 半成品）
-   —— B02 货品编辑、B03 门店商品都复用这一个渲染
+   —— B02 货品编辑、B03 供货价格维护都复用这一个渲染
    ============================================================ */
 const FORMTAG = f => f==='毛菜' ? tag('毛菜','off') : (f==='净菜' ? tag('净菜','proc') : tag('半成品','wait'));
 
@@ -4613,12 +4709,12 @@ def('B02','货品编辑','商品与价格', ()=>{
   </div>`;
 });
 /* ============================================================
-   B03 · 门店商品（合并原「门店商品目录 / 供货确认 / 失效商品」三屏）
+   B03 · 供货价格维护（合并原「门店商品目录 / 供货确认 / 失效商品」三屏）
    ------------------------------------------------------------
-   数据从哪来：门店改商品（新增 / 改规格 / 改价 / 下架 / 删除）时，
-   由门店侧通过接口主动推送过来，供应端只管接收 —— 不做定时拉取，
-   也不需要你点任何按钮等数据。右上角「手动刷新」是保底：只在
-   「怀疑漏推 / 推送通道自查」时拉一次全量对账，正常一周都点不到一次。
+   数据从哪来：底层直接复用门店 SKU 数据 —— 即各门店分配给本供应商的商品；
+   供应端不另建商品主数据，只挂一张扩展表，按 SKU 维护货品价格与扩展信息。
+   门店对商品的新增 / 改规格 / 改价 / 下架 / 删除，由门店侧接口回调实时推过来，
+   页面不轮询、不做定时拉取，更没有「手动刷新」：通道是否健康，看同步状态即可。
 
    一条状态线，四个可见阶段：
        门店推送 → 待设价 → 已设价 → 临时停售 / 已失效
@@ -4631,15 +4727,7 @@ def('B02','货品编辑','商品与价格', ()=>{
        删除  → 供应端逻辑删除，直接退出清单，不再占你的看板
                （数据仍留着——历史订单、验收、对账、发票要能追溯）
    ============================================================ */
-/* 推送通道：原型里用「最近推送时间 + 今日条数」表示通道健康。
-   真实环境由门店侧接口回调驱动，页面不轮询、也没有定时任务。 */
-let PUSH_AT = '2026-10-29 05:00';
-let PUSH_N  = 6;                              /* 今日已接收的推送条数，纯展示 */
-function pushStamp(){
-  const p = x => String(x).padStart(2,'0'), t = new Date();
-  return `${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
-}
-/* 门店重新上架后的自动恢复：按失效前状态还原，删除过的同 SKU 推送回来也算
+/* 门店重新上架后的自动恢复：按失效前状态还原，删除过的同 SKU 重新上架也算
    —— 「门店又上架了」这件事没有第二种答案，所以不设人工确认 */
 function applyBack(){
   const back = CATALOG.filter(c=>VOID[c.sid] && VOID[c.sid].back);
@@ -4652,32 +4740,30 @@ function applyBack(){
   });
   return back.length;
 }
-/* 保底：手动拉一次全量目录 —— 推送正常时不该用到 */
-function syncCatalog(){
-  const el = document.getElementById('b03-push-at');
-  if(el) el.textContent = '正在向门店主数据拉全量…';
-  setTimeout(()=>{
-    PUSH_AT = pushStamp();
-    const n = applyBack();
-    go('B03');
-    toast(n ? ('保底刷新完成 · '+n+' 个门店重新上架的货品已按失效前状态恢复')
-            : ('保底刷新完成 · '+liveCat().length+' 个在管 SKU 与门店一致，推送无积压'));
-  }, 500);
-}
-
 /* Tab 顺序 = 商品在你手里走过的路（门店删除的不进来，见 b03List） */
 const B03TABDEF = [
   ['all','全部'], ['pending','待设价'], ['priced','已设价'], ['suspend','临时停售'], ['void','已失效']
 ];
 const B03HINT = {
-  all:    '门店一改就推送过来，这一屏始终是最新的 · 按 SKU 编码正序，同一商品的多规格上下相邻',
-  pending:'门店推送过来即「待设价」· 填完货品价格并保存，自动变「已设价」（其余字段选填）',
+  all:    '直接复用门店 SKU 数据，这一屏始终与门店一致 · 按 SKU 编码正序，同一商品的多规格上下相邻',
+  pending:'门店送来的货品即「待设价」· 填完货品价格并保存，自动变「已设价」（其余字段选填）',
   priced: '已设价即可参与询价、直采与发货；点「编辑」改动价格 / 包装 / 产地等，只影响之后的新单，不回溯历史单据',
   suspend:'临时停售不是拒绝：随时恢复在售，不删记录、不影响评分，停售期间不进新询价',
-  void:   '只有「下架」算失效，只读留痕，重新上架后下一条推送自动恢复；门店「删除」的不在这一页 —— 供应端已逻辑删除'
+  void:   '只有「下架」算失效，只读留痕，门店重新上架后自动恢复；门店「删除」的不在这一页 —— 供应端已逻辑删除'
 };
 let B03TAB = 'all';
 function goB03(tab){ B03TAB = tab || 'all'; go('B03'); }
+
+/* 供货价格维护的筛选项：与「状态 Tab」正交 —— Tab 决定看哪一类货，
+   下面四个筛选项再在当前类里继续收窄；切换 Tab 时筛选保留、不丢。
+   只存值、不重渲染：重渲染交给「查询」按钮，避免输入过程中整屏重绘导致输入框失焦 */
+let B03STORE='', B03FORM='', B03CAT='', B03KW='';
+function b03SetVal(k,v){
+  if(k==='store') B03STORE=v; else if(k==='form') B03FORM=v;
+  else if(k==='cat')  B03CAT=v;  else if(k==='kw')   B03KW=v;
+}
+function b03Apply(){ go('B03'); }
+function b03ResetFilter(){ B03STORE=''; B03FORM=''; B03CAT=''; B03KW=''; go('B03'); }
 function b03StatusTag(sid){
   const st = gSt(sid);
   return st==='priced'  ? tag('已设价','done')
@@ -4696,11 +4782,15 @@ function tipOf(html){
    不做「待我动作优先」：那会让行随状态跳来跳去，你第二次找同一行得重新扫一遍。
    注意 base 用 liveCat()：门店删除的已经逻辑删除，不进任何 Tab —— 包括「全部」 */
 function b03List(k){
-  const base = liveCat().filter(c=> k==='all' ? true : gSt(c.sid)===k);
+  let base = liveCat().filter(c=> k==='all' ? true : gSt(c.sid)===k);
+  if(B03STORE) base = base.filter(c=> c.store===B03STORE);
+  if(B03FORM)  base = base.filter(c=> c.form===B03FORM);
+  if(B03CAT)   base = base.filter(c=> c.cat.indexOf(B03CAT)>=0);
+  if(B03KW){ const kw = B03KW.toLowerCase(); base = base.filter(c=> (c.sid+' '+c.pname).toLowerCase().indexOf(kw)>=0); }
   return base.slice().sort((a,b)=> String(a.sid).localeCompare(String(b.sid)));
 }
 
-def('B03','门店商品','商品与价格', ()=>{
+def('B03','供货价格维护','商品与价格', ()=>{
   /* 计数一律基于在管清单：门店删除的已逻辑删除，不进分母、不进任何 Tab */
   const cnt = s => liveCat().filter(c=>gSt(c.sid)===s).length;
   const nPend = cnt('pending'), nPriced = cnt('priced'), nSus = cnt('suspend'), nVoid = cnt('void');
@@ -4737,7 +4827,7 @@ def('B03','门店商品','商品与价格', ()=>{
       note = `<span style="color:var(--text-3)">${vd.type} · ${(vd.at||'').slice(0,10)}</span>
               <span style="display:block;font-size:11px;${vd.owed>0?'color:#B45309':'color:var(--text-4)'}">${
                 vd.owed>0 ? ('仍有 '+vd.owed+' 行未完成订单，照常发货')
-                          : (vd.back ? '门店已重新上架 · 下一条推送自动恢复' : (vd.note||''))}</span>`;
+                          : (vd.back ? '门店已重新上架 · 自动恢复在售' : (vd.note||''))}</span>`;
     }
     const act =
       st==='pending' ? `<span class="link" onclick="editGoods('${c.sid}')">设价</span>
@@ -4774,8 +4864,8 @@ def('B03','门店商品','商品与价格', ()=>{
   const voidNote = (tab==='void' && (backN||owedN)) ? `<div class="banner warn" style="margin:12px 14px 0">
     ${I.warn}
     <div>
-      ${backN?`<div class="t">${backN} 个货品门店已重新上架 —— 下一条推送就会自动恢复，不需要你确认</div>
-      恢复后按失效前状态还原（已设价的仍是已设价，停售的仍是停售）。推送迟迟不到，再用右上角「手动刷新」兜底。`:''}
+      ${backN?`<div class="t">${backN} 个货品门店已重新上架 —— 自动恢复，不需要你确认</div>
+      恢复后按失效前状态还原（已设价的仍是已设价，停售的仍是停售）。门店重新上架后自动恢复在售，无需你手动操作。`:''}
       ${owedN?`<div style="margin-top:${backN?'6px':'0'}">${backN?'其中':'有'} <b>${owedN}</b> 个 SKU 仍有未完成订单：失效只停「未来」，<b>已经答应的货照常分拣、照常发货</b>。</div>`:''}
     </div>
   </div>` : '';
@@ -4784,11 +4874,10 @@ def('B03','门店商品','商品与价格', ()=>{
   const susN  = b01Suspend();                             /* 临时停售，不进可供货视图 */
   const goneN = b01Voided();                              /* 门店下架 / 删除 */
   const outN  = susN + goneN;
-  return pagehd('门店商品',
+  return pagehd('供货价格维护',
       `待设价 <b style="color:#B45309">${nPend}</b> · 已设价 <b>${nPriced}</b>${nSus?` · 临时停售 <b>${nSus}</b>`:''} · 已失效 <b>${nVoid}</b> · 覆盖 <b>${new Set(liveCat().map(c=>c.store)).size}</b> 家门店 · 可参与报价 <b>${okN}</b>${outN?` · 另有 <b>${outN}</b> 个不在清单（临时停售 ${susN} · 门店下架 / 删除 ${goneN}）`:''}`,
       `<button class="btn btn-default" title="批量为待设价 / 已设价 / 临时停售的货品填写货品价格与扩展信息" onclick="impOpen()">${I.up}导入</button>
-       <button class="btn btn-default" onclick="toast('已导出门店商品')">${I.down}导出</button>
-       <button class="btn btn-default" title="门店变更实时推送到这里，这个按钮只做保底：推送异常时拉一次全量对账" onclick="syncCatalog()">${I.clock}手动刷新</button>`,
+       <button class="btn btn-default" onclick="toast('已导出售货价格')">${I.down}导出</button>`,
       /* 现在这一屏就是唯一的待办落点（原「我的供货清单」已合并进来）：
          待设价用橙色高亮，侧栏徽标同源同数；其余说明保持中性 */
       nPend ? tag('待你设价 '+nPend+' 个','wait') : tag('全部已设价','done')) +
@@ -4796,13 +4885,15 @@ def('B03','门店商品','商品与价格', ()=>{
   <div class="card pad0">
     <div class="tabsline">${tabs}</div>
     <div class="tb2">
-      <select class="select" style="width:150px"><option>全部门店</option>${STORES.map(s=>`<option>${s.n}</option>`).join('')}</select>
-      <select class="select" style="width:130px"><option>商品形态</option><option>毛菜</option><option>净菜</option><option>半成品</option></select>
-      <input class="input" style="width:168px" placeholder="商品分类（输入搜索）">
-      <input class="input" style="width:186px" placeholder="SKU 编码 / 品名">
-      <button class="btn btn-primary sm" onclick="toast('已按条件查询')">查询</button>
-      <button class="btn btn-default sm" onclick="toast('已重置')">重置</button>
-      <span class="hint r" id="b03-push-at"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#16A34A;margin-right:5px;vertical-align:1px"></span>推送已连接 · 最近 ${PUSH_AT} · 今日 ${PUSH_N} 条</span>
+      <select class="select" style="width:150px" id="b03-store" onchange="b03SetVal('store',this.value)"><option value="">全部门店</option>${STORES.map(s=>`<option value="${s.n}" ${B03STORE===s.n?'selected':''}>${s.n}</option>`).join('')}</select>
+      <select class="select" style="width:130px" id="b03-form" onchange="b03SetVal('form',this.value)"><option value="">商品形态</option>${Array.from(new Set(CATALOG.map(c=>c.form))).map(f=>`<option value="${f}" ${B03FORM===f?'selected':''}>${f}</option>`).join('')}</select>
+      <input class="input" style="width:168px" id="b03-cat" value="${B03CAT}" placeholder="商品分类（输入搜索）" onchange="b03SetVal('cat',this.value)">
+      <input class="input" style="width:186px" id="b03-kw" value="${B03KW}" placeholder="SKU 编码 / 品名" onchange="b03SetVal('kw',this.value)">
+      <button class="btn btn-primary sm" onclick="b03Apply()">查询</button>
+      <button class="btn btn-default sm" onclick="b03ResetFilter()">重置</button>
+      ${tab==='priced'
+        ? `<button class="btn btn-danger sm" style="margin-left:auto" onclick="b03BatchSuspendAsk()">批量停售<span style="opacity:.85;font-weight:400;margin-left:4px">${list.length} 个</span></button>`
+        : `<span class="hint r" style="margin-left:auto"></span>`}
     </div>
     ${voidNote}
     <div class="tbl-wrap"><table class="tbl fixed">
@@ -4827,7 +4918,7 @@ def('B03','门店商品','商品与价格', ()=>{
 });
 
 /* ============================================================
-   B03i · 导入货品信息（门店商品页「导出」旁边那个「导入」）
+   B03i · 导入货品信息（供货价格维护页「导出」旁边那个「导入」）
    ------------------------------------------------------------
    为什么要单独一屏：门店一次推来 28 个「待设价」SKU，而价格早就躺在你自己的报价表里。
    一个一个点「设价」= 28 次跳页 + 28 次复制粘贴；批量导入是唯一能把它压成一次操作的路径。
@@ -4885,6 +4976,79 @@ let IMPRAW = '';            /* 原文：回上一步时不至于白填一遍 */
 let IMP = null;             /* 解析结果 {ok,bad,same,...} —— null = 还没校验 */
 let IMPDONE = null;         /* 写入结果 */
 let IMPSEL = null;          /* 行号 -> 是否勾选；null = 全选 */
+
+/* 导入记录：每次写入留痕（时间 / 操作员 / 成功失败 / 逐行明细），localStorage 持久化，
+   关掉页面再打开也还在 —— 审计要看的正是「谁、什么时候、改了什么、哪几条没改成」 */
+const CUR_USER = '李敏';                       /* 当前操作员（主账号），原型里写死 */
+let IMPLOG = [];
+let IMPLOG_IDX = -1;       /* 当前正在查看的导入记录下标，列表页点行时写入，详情页读取 */
+try{ const _s = localStorage.getItem('b03i_import_log'); if(_s) IMPLOG = JSON.parse(_s) || []; }catch(e){}
+function impLogSave(){ try{ localStorage.setItem('b03i_import_log', JSON.stringify(IMPLOG.slice(0,200))); }catch(e){} }
+function impLogAdd(rec){ IMPLOG.unshift(rec); if(IMPLOG.length > 200) IMPLOG.length = 200; impLogSave(); }
+/* 导入记录列表页（B03ir）与详情页（B03ird）：从「导入货品信息」单入口进入，
+   不挂左侧导航菜单 —— 用非 GROUPS 的 group（'__import_log__'），toggleNav 的全量列表也过滤不到 */
+function impRecListHtml(){
+  const rows = IMPLOG;
+  const body = rows.map((r,i)=>`
+    <tr style="cursor:pointer" onclick="IMPLOG_IDX=${i};go('B03ird')">
+      <td class="mono" style="white-space:nowrap">${r.t}</td>
+      <td>${r.op}</td>
+      <td class="c"><b style="color:var(--success)">${r.okN}</b></td>
+      <td class="c"><b style="color:${r.badN?'var(--danger)':'var(--text-4)'}">${r.badN}</b></td>
+      <td class="c">${r.sameN}</td>
+      <td class="c"><button class="btn btn-default sm" onclick="event.stopPropagation();IMPLOG_IDX=${i};go('B03ird')">查看明细</button></td>
+    </tr>`).join('');
+  return pagehd('导入记录',
+      `每次导入留痕：时间、操作员，以及逐行的成功改动与失败原因`,
+      `<button class="btn btn-default" onclick="go('B03i')">${I.back}返回导入货品信息</button>
+       <button class="btn btn-default" onclick="go('B03')">${I.back}返回供货价格维护</button>`, '')
+    + `<div class="card pad0">
+        <div class="card-hd"><h3>导入记录 <span class="sub">${rows.length} 次</span></h3>
+          <span class="hint">点任意一行查看改动 / 失败明细</span></div>
+        ${rows.length ? `<div class="tbl-wrap"><table class="tbl compact">
+          <thead><tr><th style="width:19%">时间</th><th style="width:9%">操作员</th>
+            <th class="c" style="width:8%">成功</th><th class="c" style="width:8%">失败</th>
+            <th class="c" style="width:10%">无变化</th><th style="width:13%">操作</th></tr></thead>
+          <tbody>${body}</tbody></table></div>`
+        : `<div style="padding:26px;text-align:center;color:var(--text-4)">还没有导入记录 —— 完成一次导入后这里会留痕</div>`}
+      </div>`;
+}
+function impRecDetailHtml(){
+  const r = (IMPLOG_IDX >= 0 && IMPLOG_IDX < IMPLOG.length) ? IMPLOG[IMPLOG_IDX] : null;
+  if(!r) return pagehd('导入记录详情', '',
+      `<button class="btn btn-default" onclick="go('B03ir')">${I.back}返回列表</button>`, '')
+    + `<div style="padding:30px;text-align:center;color:var(--text-4)">找不到这条记录，可能已被清除。</div>`;
+  const okD = (r.okRows||[]).map(x=>{
+    const chg = (x.chg||[]).length ? x.chg.join('；') : '价格未变';
+    const prc = x.oldP > 0 ? ('¥'+x.oldP.toFixed(2)+' → ¥'+x.p.toFixed(2)) : ('设价 ¥'+x.p.toFixed(2));
+    return `<tr><td class="mono">${x.sid}</td><td>${x.name}</td><td>${x.store}</td>
+      <td class="mono" style="white-space:nowrap">${prc}</td><td style="font-size:11.5px;color:var(--text-3)">${chg}</td></tr>`;
+  }).join('');
+  const failD = (r.fails||[]).map(x=>`<tr><td class="mono">行 ${x.ln}</td><td>${x.sid||'—'}</td><td>${x.name}</td><td>${x.store}</td>
+      <td style="font-size:11.5px;color:var(--danger)">${(x.why||[]).join('；')}</td></tr>`).join('');
+  return pagehd('导入记录详情',
+      `时间 ${r.t} · 操作员 ${r.op}`,
+      `<button class="btn btn-default" onclick="go('B03ir')">${I.back}返回列表</button>
+       <button class="btn btn-default" onclick="go('B03i')">${I.back}返回导入货品信息</button>`,
+      tag(`${r.okN} 成功 / ${r.badN} 失败`, r.badN ? 'wait' : 'done'))
+    + `<div class="grid-2-1">
+        <div class="card pad0">
+          <div class="card-hd"><h3>成功 ${r.okN} 条 · 改动明细</h3><span class="hint">价格 / 字段变更</span></div>
+          <div class="tbl-wrap">${(r.okRows&&r.okRows.length) ? `<table class="tbl compact">
+            <thead><tr><th>SKU</th><th>品名</th><th>门店</th><th>价格</th><th>变更</th></tr></thead>
+            <tbody>${okD}</tbody></table>` : '<div style="padding:20px;color:var(--text-4)">无</div>'}</div>
+        </div>
+        <div class="card pad0">
+          <div class="card-hd"><h3>失败 ${r.badN} 条 · 原因</h3><span class="hint">被挡回</span></div>
+          <div class="tbl-wrap">${(r.fails&&r.fails.length) ? `<table class="tbl compact">
+            <thead><tr><th>行</th><th>SKU</th><th>品名</th><th>门店</th><th>原因</th></tr></thead>
+            <tbody>${failD}</tbody></table>` : '<div style="padding:20px;color:var(--text-4)">无</div>'}</div>
+        </div>
+      </div>`;
+}
+
+def('B03ir','导入记录','__import_log__', ()=> impRecListHtml());
+def('B03ird','导入记录详情','__import_log__', ()=> impRecDetailHtml());
 
 /* 一行切成格：Excel 粘过来是 \t，存成 CSV 是 ，，引号里的分隔符不算 */
 function impCells(line){
@@ -5041,7 +5205,6 @@ function impSyncHd(){
   const g = document.getElementById('imp-go');
   if(g) g.textContent = n ? ('确认导入 ' + n + ' 条') : '确认导入';
 }
-function impSetRaw(v){ IMPRAW = v; }
 /* 从 B03 进来一律从第一步开始：上一批的解析结果留着，很容易和新文件混成一批 */
 function impOpen(){ IMPST = 1; IMP = null; IMPDONE = null; IMPSEL = null; IMPRAW = ''; go('B03i'); }
 function impBack(){ IMPST = 1; go('B03i'); }
@@ -5063,20 +5226,74 @@ function impRun(text){
     : '没有可写入的行 —— 原因都在下表里',
     r.ok.length ? 'ok' : 'err');
 }
-function impLoad(){
-  const t = document.getElementById('imp-raw');
-  impRun(t ? t.value : IMPRAW);
-}
 function impSample(){ impRun(impSampleText()); }
 function impFile(ins){
   const f = ins && ins.files && ins.files[0];
   if(!f) return;
+  const nm = String(f.name).toLowerCase();
+  const isBinary = /\.(xlsx?|xlsm?)$/.test(nm);
+  const el = document.getElementById('imp-file-name');
+  if(el) el.textContent = f.name;
+  /* 二进制表格（.xlsx / .xls）：ExcelJS 读成工作簿，取第一张表转成 CSV 文本，
+     仍走同一套 impParse 校验逻辑 —— 加列、改匹配规则只在 impParse 一处维护 */
+  if(isBinary){
+    if(typeof ExcelJS === 'undefined'){
+      toast('未能加载表格解析库（ExcelJS），请联网后重试，或「另存为 .csv / .tsv」再上传', 'err');
+      return;
+    }
+    try{
+      const rd = new FileReader();
+      rd.onload = () => {
+        new ExcelJS.Workbook().xlsx.load(rd.result).then(wb=>{
+          const ws = wb.worksheets[0];
+          if(!ws){ toast('这个表格读不出来：第一张表是空的', 'err'); return; }
+          impRun(excelwsToCsv(ws));
+          if(el) el.textContent = f.name + ' · 已校验（表：' + (ws.name || 'Sheet1') + '）';
+        }).catch(()=> toast('这个表格读不出来，确认是不是标准 .xlsx / .xls', 'err'));
+      };
+      rd.onerror = () => toast('文件读不出来，另存为 CSV 再试一次', 'err');
+      rd.readAsArrayBuffer(f);
+    }catch(e){ toast('这个文件读不了，另存为 CSV 再试一次', 'err'); }
+    try{ ins.value = ''; }catch(e){}
+    return;
+  }
+  /* 文本型表格（.csv / .tsv / .txt）：直接读成文本，去掉可能的 BOM，免得首列表头被污染认不出 */
   try{
     const rd = new FileReader();
-    rd.onload = () => impRun(String(rd.result || ''));
+    rd.onload = () => {
+      const txt = String(rd.result || '').replace(/^﻿/, '');
+      impRun(txt);
+      if(el) el.textContent = f.name + ' · 已校验';
+    };
     rd.onerror = () => toast('文件读不出来，另存为 CSV 再试一次', 'err');
     rd.readAsText(f, 'utf-8');
   }catch(e){ toast('这个文件读不了，另存为 CSV 再试一次', 'err'); }
+  try{ ins.value = ''; }catch(e){}
+}
+/* ExcelJS 工作表 → CSV 文本（喂给 impParse）。按行列数铺满，空格保留为空，
+   公式取计算结果、富文本取文本、日期取 YYYY-MM-DD，其余转字符串 */
+function excelwsToCsv(ws){
+  const out = [];
+  const rc = ws.rowCount || 0, cc = ws.columnCount || 0;
+  for(let r = 1; r <= rc; r++){
+    const line = [];
+    for(let c = 1; c <= cc; c++){
+      line.push(impCSV(excelVal(ws.getCell(r, c).value)));
+    }
+    out.push(line.join(','));
+  }
+  return out.join('\n');
+}
+function excelVal(v){
+  if(v == null) return '';
+  if(typeof v === 'object'){
+    if('result' in v && v.result != null) return String(v.result);
+    if(v.richText) return v.richText.map(t=>t.text || '').join('');
+    if('text' in v) return String(v.text);
+    if(v instanceof Date) return v.toISOString().slice(0, 10);
+    return '';
+  }
+  return String(v);
 }
 
 /* 模板带现价与现有信息 —— 已设价的行不会因为「价格必填」被你重打一遍，
@@ -5090,7 +5307,15 @@ function impCSV(v){
   return /[",\n\t]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 function impTplText(){
-  const head = IMPCOLS.map(c=>c[1]).join(',');
+  /* 表头直接把规则写进列名：SKU / 商品信息标记「不可修改」，价格标记「必填」——
+     下载到本地的模板自己就会说话，不依赖看说明 */
+  const head = IMPCOLS.map(def=>{
+    const k = def[0];
+    if(k === 'sid')   return 'SKU编码(不可修改)';
+    if(k === 'info')  return '商品信息(只读·不可修改)';
+    if(k === 'price') return '货品价格(必填)';
+    return def[1];
+  }).join(',');
   const body = impTplRows().map(c=>{
     const k = CLAIM[c.sid] || {};
     const p = parseFloat(k.price);
@@ -5123,11 +5348,96 @@ function impDownload(name, text){
     return true;
   }catch(e){ return false; }
 }
+/* 模板下载：默认给真实 .xlsx —— SKU / 商品信息两列标红并锁定（真·不可修改），
+   价格列标橙并标注「必填」，其余列解锁可填；ExcelJS 未加载（离线）时降级为带注解表头的 CSV */
 function impTemplate(){
+  if(typeof ExcelJS !== 'undefined'){ impTemplateXlsx(); return; }
+  impTemplateCsv();
+}
+function impTemplateCsv(){
   const n = impTplRows().length;
   const ok = impDownload('货品信息导入模板.csv', impTplText());
-  toast(ok ? ('模板已下载 · '+n+' 个可导入 SKU，现价与现有信息都已填好，只改要改的格（「商品信息」列只作对照，不上传）')
+  toast(ok ? ('模板已下载（CSV）· '+n+' 个可导入 SKU，现价与现有信息都已填好，只改要改的格（「商品信息」列只作对照，不上传）')
            : ('模板没能生成，请按列序手动粘贴：'+IMPCOLS.map(c=>c[1]).join(' / ')), ok ? 'ok' : 'err');
+}
+/* 生成真实 .xlsx 模板（ExcelJS 免费版即可写字体色 / 填充 / 单元格锁定） */
+function impTemplateXlsx(){
+  if(typeof ExcelJS === 'undefined'){ toast('未能加载表格解析库（ExcelJS），模板改以 CSV 下载', 'warn'); impTemplateCsv(); return; }
+  const rows = impTplRows();
+  /* 表头直接把规则写进列名：SKU / 商品信息标（不可修改），价格标（必填）——
+     既满足「列头显示不可修改 / 必填」，下回上传时 impParse 用前缀匹配也能认出列 */
+  const headers = ['SKU编码(不可修改)','商品信息(只读·不可修改)','货品价格(必填)','包装单位','产地','保质期','别名','三方编码','备注'];
+  const widths  = [16, 30, 12, 16, 12, 10, 10, 12, 14];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('货品信息');
+  headers.forEach((h, i)=>{ ws.getCell(1, i + 1).value = h; });
+  widths.forEach((w, i)=>{ ws.getColumn(i + 1).width = w; });
+  const redFont    = {color:{argb:'FFDC2626'}, bold:true}, redFill    = {type:'solid', fgColor:{argb:'FFFDECEC'}};
+  const orangeFont = {color:{argb:'FFB45309'}, bold:true}, orangeFill = {type:'solid', fgColor:{argb:'FFFEF3E2'}};
+  for(let c = 1; c <= 9; c++){
+    const cell = ws.getCell(1, c);
+    if(c === 1 || c === 2){ cell.font = redFont;    cell.fill = redFill; }
+    else if(c === 3){       cell.font = orangeFont; cell.fill = orangeFill; }
+    cell.alignment = {vertical:'middle'};
+  }
+  rows.forEach(c=>{
+    const k = CLAIM[c.sid] || {};
+    const p = parseFloat(k.price);
+    const r = ws.addRow([
+      c.sid, impInfoOf(c), p > 0 ? p.toFixed(2) : '',
+      k.pack || '', k.origin || '', k.shelf || '', k.alias || '', k.tpcode || '', k.note || ''
+    ]);
+    /* 数据行：SKU / 商品信息两列锁定不可改；价格与其余列解锁可填 */
+    for(let c = 1; c <= 9; c++){
+      const cell = r.getCell(c);
+      cell.protection = {locked: (c === 1 || c === 2)};
+      cell.alignment = {vertical:'middle'};
+    }
+  });
+  /* 开启工作表保护：被锁定的红列真正改不动，解锁的价格等列照常可填 */
+  ws.protect('', { selectLockedCells:true, selectUnlockedCells:true });
+  wb.xlsx.writeBuffer().then(buf=>{
+    impDownloadBlob('货品信息导入模板.xlsx', buf);
+    toast('模板已下载（.xlsx）· '+rows.length+' 个可导入 SKU，红色列已锁定不可修改，价格列必填', 'ok');
+  }).catch(()=>{ toast('xlsx 写入失败，已改以 CSV 下载', 'err'); impTemplateCsv(); });
+}
+/* ExcelJS 生成的 buffer 走 Blob 下载（与 CSV 的 impDownload 分开，type 不同） */
+function impDownloadBlob(name, buf){
+  try{
+    const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    return true;
+  }catch(e){ return false; }
+}
+
+/* 模板表头示例：把「红字不可修改 / 价格必填」直接画出来 —— CSV 带不了颜色，
+   这一屏的预览才是不用下载就能看到的「模板长什么样」 */
+function impTplPreviewHtml(){
+  const head = IMPCOLS.map(def=>{
+    const [key, label, , mode] = def;
+    const isRO  = (key === 'sid') || (mode === 'ro');
+    const isReq = (key === 'price');
+    const color = isRO ? '#DC2626' : (isReq ? '#B45309' : 'var(--text-2)');
+    const note  = isRO ? ' <span style="color:#DC2626;font-weight:600">不可修改</span>'
+                       : (isReq ? ' <span style="color:#B45309;font-weight:600">必填</span>' : '');
+    return `<th style="color:${color};white-space:nowrap;font-weight:600">${label}${note}</th>`;
+  }).join('');
+  const c = impTplRows()[0];
+  const row = IMPCOLS.map(def=>{
+    const key = def[0], isRO = (key === 'sid') || (def[3] === 'ro');
+    let v = '';
+    if(key === 'sid')      v = c ? c.sid : '';
+    else if(key === 'info') v = c ? impInfoOf(c) : '';
+    else if(key === 'price') v = c ? ((CLAIM[c.sid]||{}).price || '') : '';
+    return `<td class="${isRO ? 'imp-rov' : ''}" style="${isRO ? 'color:#DC2626' : ''}">${v}</td>`;
+  }).join('');
+  return `<table class="tbl compact" style="font-size:11.5px">
+    <thead><tr>${head}</tr></thead>
+    <tbody><tr>${row}</tr></tbody>
+  </table>`;
 }
 
 function impDLFail(){
@@ -5146,6 +5456,14 @@ function impCommit(){
                p:r.p, oldP:r.oldP, changed:res.changed, chg:r.chg, suspend: r.st === 'suspend'});
   });
   IMPDONE = {rows:done, bad:IMP.bad, same:IMP.same, skipped:IMP.ok.length - done.length};
+  /* 落一笔导入记录：谁、什么时候、成功几条、失败几条、每条改了什么 / 为什么没改成 */
+  impLogAdd({
+    id: Date.now(), t: nowStamp(), op: CUR_USER,
+    okN: done.length, badN: IMP.bad.length, sameN: IMP.same.length,
+    total: done.length + IMP.bad.length + IMP.same.length,
+    okRows: done.map(x=>({sid:x.sid, name:x.name, store:x.store, p:x.p, oldP:x.oldP, changed:x.changed, chg:(x.chg||[]).map(c=>c.t)})),
+    fails: IMP.bad.map(r=>({ln:r.ln, sid:r.sid, name:r.name, store:r.store, why:r.why||[]}))
+  });
   /* 落点 Tab 由「写完之后这些货在哪儿」决定，不写死：
      全成了已设价 → 已设价；里面混着停售的 → 全部。否则点在「已设价」里，
      那几个停售的货就是凭空消失了（B02 保存时踩过同一个坑） */
@@ -5265,12 +5583,16 @@ def('B03i','导入货品信息','商品与价格', ()=>{
   const colRows = IMPCOLS.map((def, i)=>{
     const [key, label, , mode] = def;
     const [mark, txt] = IMPDOC[key] || ['选填',''];
-    const cls = mode === 'ro' ? 'off' : (mode === 'req' ? 'wait' : 'line');
+    /* SKU 编码与只读对照列都不可修改：前者是这一行的身份（改了就认不出是哪个货），
+       后者是门店主数据（供应端本就没有修改权）。两者都标红 + 「不可修改」 */
+    const isRO  = (key === 'sid') || (mode === 'ro');
+    const cls   = isRO ? 'err' : (mode === 'req' ? 'wait' : 'line');
+    const markTxt = isRO ? '不可修改' : mark;
     return `
-    <tr${mode === 'ro' ? ' style="background:#FAFBFC"' : ''}>
+    <tr${isRO ? ' style="background:#FEF2F2"' : ''}>
       <td class="c mono" style="color:var(--text-4);width:26px">${i+1}</td>
-      <td><b style="font-size:12px;${mode === 'ro' ? 'color:var(--text-3)' : ''}">${label}</b></td>
-      <td><span class="tag ${cls}" style="white-space:nowrap">${mark}</span></td>
+      <td><b style="font-size:12px;${isRO ? 'color:#DC2626' : ''}">${label}</b></td>
+      <td><span class="tag ${cls}" style="white-space:nowrap">${markTxt}</span></td>
       <td style="font-size:11.5px;color:var(--text-3);line-height:1.5">${txt}</td>
     </tr>`;
   }).join('');
@@ -5290,29 +5612,42 @@ def('B03i','导入货品信息','商品与价格', ()=>{
   <div class="grid-2-1">
     <div class="card">
       <div class="card-hd" style="padding:0 0 12px;border-bottom:1px solid var(--line);margin-bottom:12px">
-        <h3>粘贴表格或选择文件</h3>
-        <span class="hint">从 Excel 直接粘贴（制表符分隔）或 CSV，第一行可带表头</span>
+        <h3>选择表格文件</h3>
+        <span class="hint">支持 .xlsx / .xls / .csv / .tsv，第一行可带表头</span>
       </div>
-      <textarea class="input" id="imp-raw" spellcheck="false" oninput="impSetRaw(this.value)"
-        style="height:196px;padding:9px 11px;resize:vertical;white-space:pre;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.75"
-        placeholder="SKU编码,商品信息（只读）,货品价格,包装单位,产地,保质期,别名,三方编码,备注&#10;S1001401,干辣椒 · 1kg/袋 · 长宁来福士店,18.50,编织袋 · 1kg/袋,河南柘城,180 天,干辣椒,XF-1401,">${at(IMPRAW)}</textarea>
+      <div class="imp-drop" onclick="document.getElementById('imp-file').click()"
+           ondragover="event.preventDefault();this.classList.add('over')"
+           ondragleave="event.preventDefault();this.classList.remove('over')"
+           ondrop="event.preventDefault();this.classList.remove('over');if(event.dataTransfer.files&&event.dataTransfer.files[0])impFile({files:[event.dataTransfer.files[0]]})">
+        <div style="margin-top:6px"><b>点击选择文件</b>，或将文件拖到这里</div>
+        <div style="font-size:11.5px;color:var(--text-4);margin-top:4px">不支持粘贴文本 —— 统一以表格文件上传</div>
+        <div id="imp-file-name" style="font-size:12px;color:var(--brand-600);margin-top:8px;min-height:16px"></div>
+      </div>
+      <input type="file" id="imp-file" accept=".xlsx,.xls,.csv,.tsv,.txt" style="display:none" onchange="impFile(this)">
       <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="impLoad()">校验并预览</button>
+        <button class="btn btn-primary" onclick="document.getElementById('imp-file').click()">选择文件并校验</button>
         <button class="btn btn-default" onclick="impSample()">载入示例（${demo.ok.length} 条可写入 · ${demo.bad.length + demo.same.length} 条不写入）</button>
-        <button class="btn btn-default" onclick="document.getElementById('imp-file').click()">选择 CSV 文件</button>
-        <input type="file" id="imp-file" accept=".csv,.txt" style="display:none" onchange="impFile(this)">
         <span class="hint r">单次最多 ${IMPMAX} 行 · 校验只读，不改任何数据</span>
+      </div>
+      <div style="margin-top:12px;padding:10px 12px;background:var(--brand-50);border:1px solid var(--brand-line);border-radius:var(--r-md);font-size:11.5px;color:var(--text-3);line-height:1.7">
+        <b style="color:var(--brand-700)">模板说明：</b>「<b class="imp-rov">SKU 编码</b>」「<b class="imp-rov">商品信息</b>」两列<span class="imp-rov">不可修改</span>（红字列）；「<b class="imp-req">货品价格</b>」<span class="imp-req">必填</span>。右侧可下载带现价与现有信息的模板，只改要改的格。
       </div>
     </div>
     <div class="card pad0">
-      <div class="card-hd"><h3>九列怎么写</h3><span class="hint">列序固定</span></div>
-      <div class="tbl-wrap"><table class="tbl compact">
-        <thead><tr>
-          <th class="c" style="width:26px"></th><th style="width:96px">列</th>
-          <th style="width:74px">必填</th><th>留空时</th>
-        </tr></thead>
-        <tbody>${colRows}</tbody>
-      </table></div>
+      <div class="card-hd"><h3>模板与九列说明</h3><span class="hint">红字列不可修改 · 价格为必填</span></div>
+      <div style="padding:12px 16px 0">
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:6px">模板表头（示例）</div>
+        ${impTplPreviewHtml()}
+      </div>
+      <div class="tbl-wrap" style="padding:0 16px">
+        <table class="tbl compact">
+          <thead><tr>
+            <th class="c" style="width:26px"></th><th style="width:96px">列</th>
+            <th style="width:84px">必填 / 不可改</th><th>留空时</th>
+          </tr></thead>
+          <tbody>${colRows}</tbody>
+        </table>
+      </div>
       <div style="padding:12px 16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--text-3);line-height:1.75">
         同一个 SKU 出现多次，只认第一行；其余标「重复」。<br>
         模板里已经填好现价与现有信息 —— 只改要改的格，别整列删掉重填。<br>
@@ -5424,7 +5759,7 @@ def('B03i','导入货品信息','商品与价格', ()=>{
   <div class="card pad0">
     <div class="card-hd">
       <h3>这一批写进去了什么</h3>
-      <span class="hint">逐行可核对，和「门店商品」里的显示一致</span>
+      <span class="hint">逐行可核对，和「供货价格维护」里的显示一致</span>
     </div>
     <div class="tbl-wrap"><table class="tbl compact">
       <thead><tr>
@@ -5444,13 +5779,14 @@ def('B03i','导入货品信息','商品与价格', ()=>{
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
     <button class="btn btn-default" onclick="impRestart()">再导一批</button>
     ${(IMP && (IMP.bad.length || IMP.same.length)) ? `<button class="btn btn-default" onclick="impDLFail()">${I.down}导出被挡明细</button>` : ''}
-    <button class="btn btn-primary" onclick="go('B03')">${I.back}返回门店商品</button>
+    <button class="btn btn-primary" onclick="go('B03')">${I.back}返回供货价格维护</button>
   </div>`;
 
   return pagehd('导入货品信息',
       `批量填写<b>货品价格</b>与包装单位 / 产地 / 保质期 / 别名 / 三方编码 / 备注 · <b>价格必填</b> · 留空的格子保持原值不动 · 已失效与门店已删除只读，会被挡回 · 模板第 2 列「<b>商品信息</b>」只作对照，<b>不上传</b>`,
-      `<button class="btn btn-default" onclick="impTemplate()">${I.down}下载模板</button>
-       <button class="btn btn-default" onclick="go('B03')">${I.back}返回门店商品</button>`,
+      `<button class="btn btn-default" onclick="go('B03ir')">${I.doc}导入记录${IMPLOG.length?'（'+IMPLOG.length+'）':''}</button>
+       <button class="btn btn-default" onclick="impTemplate()">${I.down}下载模板(.xlsx)</button>
+       <button class="btn btn-default" onclick="go('B03')">${I.back}返回供货价格维护</button>`,
       hdTag) +
   steps + (st === 3 ? step3 : (st === 2 ? step2 : step1));
 });
@@ -5556,6 +5892,8 @@ function trendChart(sid){
   /* 按口径切一刀：历史是按时间正序的，所以「口径内」一定是末尾连续的一段 ——
      不用逐点判，找到第一个落进口径的位置就够了。 */
   const firstIn = cut ? raw.findIndex(x=>String(x.at) >= cut) : 0;
+  const abnCount  = raw.filter(isAbn).length;     /* 被标记异常的记录数 */
+  const statCount = histStat(sid).length;          /* 真正计入统计的记录数（口径内且非异常） */
   if(raw.length < 2){
     return `<div class="tch-empty">${I.info}
       <div>这个货品只有 1 条价格记录，还画不出趋势 —— 改过一次价之后，这里就有曲线了。</div></div>`;
@@ -5638,6 +5976,7 @@ function trendChart(sid){
   const dots = raw.map((x,i)=>{
     const px = pts[i][0], py = pts[i][1];
     const dev = avg ? (x.p - avg) / avg * 100 : 0;
+    const isAbnX = isAbn(x);
     /* 口径内没样本时 avg 为 0，「偏离 +0.0%」会被读成「跟均价持平」——
        那是谎话，直接写「—」 */
     const dTxt = avg > 0 ? ((dev > 0 ? '+' : '') + dev.toFixed(1) + '%') : '—';
@@ -5659,7 +5998,7 @@ function trendChart(sid){
     return `
     <g class="cp">
       <line class="guide" x1="${px.toFixed(1)}" y1="${padT}" x2="${px.toFixed(1)}" y2="${base}"/>
-      <circle class="dot${isIn?'':' out'}" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${isLast?5:3.6}"/>
+      <circle class="dot${isAbnX?' abn':(isIn?'':' out')}" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${isLast?5:3.6}"/>
       ${isLast?`<text class="cur" x="${curX}" y="${(py-10).toFixed(1)}" text-anchor="${curAnc}">当前 ${money(x.p)}</text>`:''}
       <circle class="hit" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="15"/>
       <g class="tip">
@@ -5671,7 +6010,7 @@ function trendChart(sid){
         ${row('操作人', x.by || '—', 63)}
         ${row('价格', money(x.p), 81, '#0F172A', true)}
         ${row('对均价偏离', dTxt, 99, dCol)}
-        ${row('是否计入均价', isIn ? '是' : '否 · 口径外', 117, isIn ? '#1F8B4C' : '#94A3B8')}
+        ${row('是否计入均价', isAbnX ? '否 · 异常' : (isIn ? '是' : '否 · 口径外'), 117, isAbnX ? '#B91C1C' : (isIn ? '#1F8B4C' : '#94A3B8'))}
       </g>
     </g>`;
   }).join('');
@@ -5715,27 +6054,37 @@ function trendChart(sid){
       <span><i class="k1"></i>货品价格</span>
       <span><i class="k2"></i>均价估算 ${avg>0?money(avg):'—'}</span>
       ${firstIn>0?'<span><i class="k3"></i>口径外 · 不计入均价</span>':''}
-      <span class="hint">口径 ${avgLabel()}${cut?('（'+cut.slice(5)+' 起）'):'（不限）'} · ${raw.length} 次里 ${inPts.length} 次计入 · 悬停看单点明细</span>
+      ${abnCount>0?'<span><i class="k4"></i>异常调价 · 已排除</span>':''}
+      <span class="hint">口径 ${avgLabel()}${cut?('（'+cut.slice(5)+' 起）'):'（不限）'} · ${raw.length} 次记录中 ${statCount} 次计入统计 · 悬停看单点明细</span>
     </div>
   </div>`;
 }
 function priceTrend(sid){
   const g = goodsOne(sid) || {};
   const h = priceHist(sid);
-  const inR = histIn(sid);                       /* 当前口径内、真正参与均价的那几条 */
+  const inR = histIn(sid);                        /* 当前口径内的记录（时间窗口） */
+  const stat = histStat(sid);                     /* 真正参与均价 / 统计：口径内 且 非异常 */
+  const statSet = new Set(stat);
+  const inSet  = new Set(inR);
   const avg = priceAvg(sid);
   const cut = avgCut();
-  const inSet = new Set(inR);
-  const list = h.slice().reverse().map(x=>{
+  const abnCount = h.filter(isAbn).length;
+  const list = h.map((x, idx)=>({x, idx})).reverse().map(({x, idx})=>{
     const dev = avg ? ((x.p-avg)/avg*100) : 0;
-    const inIt = inSet.has(x);
+    const inIt  = inSet.has(x);
+    const abn   = isAbn(x);
+    const statIt = statSet.has(x);
+    const devTxt = abn ? '异常' : (x === h[h.length-1] ? '(当前)' : (avg>0 ? ((dev>0?'+':'')+dev.toFixed(1)+'%') : '—'));
+    const devCol = abn ? '#B91C1C' : 'var(--text-3)';
+    const rc = abn ? ' style="background:#FDF4F4"' : (inIt ? '' : ' style="background:#FCFCFD"');
     return `
-    <tr${inIt?'':' style="background:#FCFCFD"'}>
+    <tr${rc}>
       <td class="mono">${x.at}</td>
-      <td${inIt?'':' style="color:var(--text-4)"'}>${x.by}</td>
-      <td class="mono r name"${inIt?'':' style="color:var(--text-3)"'}>¥${x.p.toFixed(2)}</td>
-      <td class="mono r" style="color:var(--text-3)">${x===h[h.length-1]?'(当前)':(avg>0?((dev>0?'+':'')+dev.toFixed(1)+'%'):'—')}</td>
-      <td class="r">${inIt ? tag('计入','done') : '<span style="color:var(--text-4);font-size:11.5px">口径外</span>'}</td>
+      <td style="color:${abn?'var(--text-4)':'var(--text-3)'}">${x.by}</td>
+      <td class="mono r name" style="color:${statIt?'var(--text-1)':'var(--text-3)'}">¥${x.p.toFixed(2)}</td>
+      <td class="mono r" style="color:${devCol}">${devTxt}</td>
+      <td class="r">${abn ? tag('异常排除','err') : (inIt ? tag('计入','done') : '<span style="color:var(--text-4);font-size:11.5px">口径外</span>')}</td>
+      <td class="r"><button class="btn btn-default sm" onclick="toggleAbn('${sid}',${idx})">${abn ? '取消标记' : '标记异常'}</button></td>
     </tr>`;
   }).join('');
   const lastAt = h.length ? h[h.length-1].at : '—';
@@ -5744,19 +6093,19 @@ function priceTrend(sid){
       <div><dt>SKU 编码</dt><dd class="mono">${sid}</dd></div>
       <div><dt>当前货品价</dt><dd class="mono name">¥${(g.price||0).toFixed(2)}</dd></div>
       <div><dt>均价估算</dt><dd class="mono">${avg>0?('¥'+avg.toFixed(2)):'—'}</dd>
-        <div class="hint" style="font-size:11px;margin-top:1px">${avgLabel()} · ${inR.length}/${h.length} 次计入</div></div>
+        <div class="hint" style="font-size:11px;margin-top:1px">${avgLabel()} · 计入 ${stat.length} 次（口径外 ${h.length-inR.length} · 异常排除 ${abnCount}）</div></div>
       <div><dt>变更次数</dt><dd class="mono">${h.length} 次</dd></div>
     </div>
     ${trendChart(sid)}
     <div class="banner ${avg>0?'info':'warn'}" style="margin:16px 0 14px">${avg>0?I.box:I.warn}
       <div>${avg > 0
-        ? `均价 = <b>「${avgLabel()}」内 ${inR.length} 次</b>变更价的简单平均（这一共 ${h.length} 次变更，只有口径内的计入），仅作<b>定价参考</b>。要换时间范围，回列表点「均价口径」。下单以「提交时刻的货品价格」为准，此处改价不影响已在途 / 已生成的订单。`
+        ? `均价 = <b>「${avgLabel()}」内 ${stat.length} 条有效记录</b>的简单平均（共 ${h.length} 次变更，其中口径外 ${h.length-inR.length} 条、异常调价 ${abnCount} 条已排除），仅作<b>定价参考</b>。被标记「异常排除」的改价不计入均价及任何统计维度（最高优先级）。要换时间范围，回列表点「均价口径」。下单以「提交时刻的货品价格」为准，此处改价不影响已在途 / 已生成的订单。`
         : `<b>「${avgLabel()}」内没有一条改价记录</b>，所以均价算不出来 —— 这个货最后一次改价是 <b>${lastAt}</b>。它多半是长期不调价的稳定品；要看均价，把口径放宽到「全部历史」，或等下一次调价后自然就有了。`}</div>
     </div>
     <div class="card-hd" style="padding:0 0 10px;border-bottom:none"><h3>变更明细</h3>
-      <span class="hint" style="margin-left:auto">与上图同一个数据源 · 灰字行在口径外，不参与均价</span></div>
+      <span class="hint" style="margin-left:auto">灰字行在口径外 · 红字「异常排除」不计入任何统计 · 可逐行标记</span></div>
     <div class="tbl-wrap"><table class="tbl compact">
-      <thead><tr><th>变更日期</th><th>操作人</th><th class="r">价格</th><th class="r">对均价偏离</th><th class="r">是否计入均价</th></tr></thead>
+      <thead><tr><th>变更日期</th><th>操作人</th><th class="r">价格</th><th class="r">对均价偏离</th><th class="r">是否计入均价</th><th class="r">操作</th></tr></thead>
       <tbody>${list}</tbody>
     </table></div>`,
     `<button class="btn btn-default" onclick="closeModal()">关闭</button>`, true);
@@ -6127,7 +6476,12 @@ def('C06','报价单详情','询价与报价', ()=>{
   const maskTag = pending ? '<span style="color:var(--text-4)">待公示</span>'
                           : '<span style="color:var(--text-4)">截止后比价</span>';
   const maskWhy = pending ? '门店确认后公示' : '询价进行中，截止后由门店比价';
-  const rows = d.lines.map((l,i)=>{
+  /* 报价行排序：可报（供）的排前面、不可供（不报价）的置后，组内保持原顺序 ——
+     每次进入/刷新本页都按此顺序渲染，不可供行始终落在表格末尾 */
+  const dIdxs = d.lines.map((l,i)=>i).sort((a,b)=>
+    ((d.lines[a].none?1:0) - (d.lines[b].none?1:0)) || a - b);
+  const rows = dIdxs.map(i=>{
+    const l = d.lines[i];
     if(l.none) return `<tr>
       <td class="mono c" style="color:var(--text-4);width:46px">${i+1}</td>
       <td class="nm"><b>${l.n}</b><span>${l.s}</span></td>
@@ -9302,7 +9656,7 @@ B02:[
 ],
 B03:[
   ["三屏合一，一条状态线","原来「门店商品目录 / 供货确认 / 失效商品」三屏说的是同一件事的四个阶段，现在合成一屏：<b>待设价 → 已设价 → 临时停售 / 已失效</b>。<br>你在一个地方就能回答三个问题：这个 SKU 我给价了吗、给的是多少、现在还卖不卖 —— 不用再在三个页面之间倒着找同一行货。"],
-  ["门店一改就推送过来，这一页不用「拉」","门店在后台新增 SKU、改规格、改价、下架、删除，都由门店侧<b>通过接口主动推送</b>到供应端 —— 你打开这一页看到的就是最新的，<b>没有定时任务，也不用等某个整点</b>。<br>右上角「手动刷新」只是<b>保底</b>：推送通道出问题、或你怀疑漏推了，点一次拉全量做对账。<b>正常一周都点不到它一次</b>；如果每天都在点，那是通道的问题，找运营查对接，不是你的问题。"],
+  ["门店一改就推送过来，这一页不用「拉」","门店在后台新增 SKU、改规格、改价、下架、删除，都由门店侧<b>通过接口主动推送</b>到供应端 —— 你打开这一页看到的就是最新的，<b>没有定时任务，也不用等某个整点</b>，更<b>没有「手动刷新」</b>。<br>货品底表直接复用门店分配给你的 SKU，供应端只挂一张扩展表维护价格与扩展信息；通道是否健康看同步状态（推送已连接 · 最近 · 今日 N 条），推送迟迟不到就找运营查对接，不是你的问题。"],
   ["待办只挂这一屏：橙色就是现在要动手的","这一屏既是门店目录的全量视图，也是<b>唯一的待办落点</b>：待设价的货会标橙，侧栏橙色数字、页头橙色标签、页头橙色的「待设价」数，三处是同一个口径（只数现在真能供货的：门店下架 / 删除、临时停售都不算）。<br>五个 Tab 上的数字只是「筛出来有几条」，<b>不着色、不是催你</b>；真正该动手的，是那枚橙色。点徽标进来，待设价的行还在原来的 SKU 位置上（不提前、不置顶），按编码自己找，比让行跳来跳去快。"],
   ["取消「确认供货」：推送过来即待设价","以前门店商品过来，要先点一次「确认我要供」，再填三个字段才能给价 —— 那一步对生鲜供应商没有信息量：<b>你来这儿本来就是来给价的</b>。<br>现在推送过来直接是「待设价」，填完价就是「已设价」，立刻进询价、直采、发货。少一次点击，也少一个会积压的收件箱。"],
   ["「待设价」和「已设价」差在哪","<b>待设价</b>标橙：门店要的货你还没给价，它不会出现在询价单里，也不会被安排分拣。<br><b>已设价</b>：<b>货品价格已填且 &gt; 0</b> —— 就这一条，询价、直采、发货全通。包装单位、产地这些是选填，缺了照样能供。<b>颜色不是装饰，它对应「能不能进业务流程」</b>。"],
@@ -9501,13 +9855,13 @@ J01:[
   ["这几项由平台核验，不接受自行修改","企业名称、统一社会信用代码、法人、注册资本由平台在入驻时核验并固定。<b>这些字段一旦可改，合同主体就能被偷换</b>。需要变更请走「申请变更」，由平台审核后生效。"],
   ["修改收款账号必须走人工复核","提交后平台会<b>电话回拨入驻时预留的手机号</b>确认，且 24 小时内生效。这是唯一一个「改了也不会立刻生效」的字段。"],
   ["证照到期前 30 天开始提醒","提醒进「待办中心」；<b>逾期未更新将暂停接单</b>。食堂验收时会核证照有效期 —— 这不是平台在卡你，是采购方的合规要求。"],
-  ["经营范围决定你能收到哪些品类的询价单","经营范围由平台在入驻时审核，不在这个页面维护。<b>经营范围外的品类不会给你推询价单</b>，而且不会有任何提示。具体某个门店的某个 SKU 供不供，在「门店商品」里点<b>临时停售</b>即可 —— 不需要另外维护一份范围。"],
+  ["经营范围决定你能收到哪些品类的询价单","经营范围由平台在入驻时审核，不在这个页面维护。<b>经营范围外的品类不会给你推询价单</b>，而且不会有任何提示。具体某个门店的某个 SKU 供不供，在「供货价格维护」里点<b>临时停售</b>即可 —— 不需要另外维护一份范围。"],
   ["评级每月 1 日更新","综合评级影响询价单的<b>推送优先级</b>。它由履约及时率、验收合格率、售后改判率算出，没有任何人工调整的口子。"],
 ],
 J02:[
   ["商户 = 签约主体，门店 = 实际收货点","对账按<b>商户</b>结，订单按<b>门店</b>下。所以一张对账单的金额是 5 家门店汇总，而一张订单只对应一家门店。"],
   ["为什么门店不可自建","门店是<b>收货与验收的主体</b>，一旦能自建，就能伪造一个「永远验收合格」的收货点。所以门店只能由平台创建。"],
-  ["门店决定三件事","<b>商品与品类</b>（门店建什么 SKU、归哪个分类）、<b>配送线路与时段</b>（收货点的时间窗）、<b>送货单模板</b>（门店可单独指定）。我方不维护范围，只在「门店商品」里逐条决定报不报价、要不要临时停售。"],
+  ["门店决定三件事","<b>商品与品类</b>（门店建什么 SKU、归哪个分类）、<b>配送线路与时段</b>（收货点的时间窗）、<b>送货单模板</b>（门店可单独指定）。我方不维护范围，只在「供货价格维护」里逐条决定报不报价、要不要临时停售。"],
   ["一家店 = 一个结算单元","对账单按门店出，因为验收与扣减都发生在门店。<b>商户层级只做汇总展示</b>，不做结算。"],
 ],
 J03:[
