@@ -3,7 +3,7 @@
 <head data-page-node-id="m8gXXdtYqO8IuG8ntFGb0W">
 <meta charset="UTF-8" data-page-node-id="JFqhPVeAwqrNc4CYPMzawC">
 <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="tKa9S2o79LYUT6aRiCcBIJ">
-<title>数智餐厅供应管理平台</title>
+<title>数智餐饮供应管理平台</title>
 <style>
 /* ============ 设计令牌 · 严格对齐《供应商端页面设计标准 v1.0》 ============ */
 :root{
@@ -1390,7 +1390,7 @@ function shell(){
     <aside class="sidebar">
       <div class="logo">
         <div class="mark">食</div>
-        <div class="txt"><b>数智餐厅供应管理平台</b><span>SUPPLIER CONSOLE</span></div>
+        <div class="txt"><b>数智餐饮供应管理平台</b><span>SUPPLIER CONSOLE</span></div>
       </div>
       <nav class="nav">${navBody}</nav>
     </aside>
@@ -1522,7 +1522,7 @@ function loginPage(){
     <div class="login-left">
       <div class="brand">
         <div class="mk">食</div>
-        <div><b>数智餐厅供应管理平台</b></div>
+        <div><b>数智餐饮供应管理平台</b></div>
       </div>
       <div class="lc-mid">
         <h2>让每一家门店，<br>都在同一套标准下高效经营</h2>
@@ -2831,7 +2831,7 @@ def('D02','订单详情', '订单中心', ()=>{
   }
   /* 已拒绝 / 已关闭 / 待确认：终态或不涉发货，不给任何发货单入口 */
   /* 已拒绝 / 已关闭 / 待确认：终态或不涉发货，不给任何发货单入口 */
-  acts.push(`<button class="btn btn-default" onclick="toast('打印功能见 K05')">${I.print}打印</button>`);
+  acts.push(`<button class="btn btn-default" onclick="goOrderPrint('D02')">${I.print}打印</button>`);
 
   /* 流转记录：由状态生成，每条都是「真实状态变更时间」，不再用「现在」占位。
      末条即当前状态、且带真实时间：待确认=创建(09:12)、已拒绝=拒绝接单(10:05)、已关闭=撤回(10:05)、
@@ -4268,6 +4268,12 @@ function goK05(back){
   K05_BACK = back || 'E04';
   go('K05');
 }
+/* 报价单 / 采购订单打印预览的来源与返回：与 K05 一样是全局页，不进侧栏导航。
+   C06 打印进 K08、D02 打印进 K09；I01 模板列表预览也按单据类型分流到对应模板。 */
+let PRINT_BACK = 'C06';
+const PRINT_BACK_LABEL = {C06:'返回报价单', D02:'返回详情', I01:'返回模板'};
+function goQuotePrint(back){ PRINT_BACK = back || 'C06'; go('K08'); }
+function goOrderPrint(back){ PRINT_BACK = back || 'D02'; go('K09'); }
 /* 标记：当前采购订单详情(D02)由哪个列表/页面进入，决定 D02 顶部返回按钮的去向与文案。
    默认 'D01'（订单中心列表）；E01 / A02 / E04 / F05 等入口各自记录，F05 进入时返回对应退货单详情。 */
 let D02_BACK = 'D01';
@@ -4532,6 +4538,131 @@ def('K05','送货单打印','全局', ()=>{
 });
 function qtyTotal(a){ return a.reduce((n,l)=>n+(Number(l.q)||0),0); }
 function actTotal(a){ return a.reduce((n,l)=>n+(l.off?0:(Number(l.qty)||0)),0); }
+
+/* ---------- K08 报价单打印：报价提交时的只读快照，不取当前货品价格 ---------- */
+def('K08','报价单打印','全局', ()=>{
+  const q = CUR_QUOTE;
+  const backBtn = `<button class="btn btn-default" onclick="go('${PRINT_BACK}')">${I.back}${PRINT_BACK_LABEL[PRINT_BACK]||'返回'}</button>`;
+  if(!q){
+    return pagehd('未参与', '本单未提交报价，无报价数据', backBtn, tag('未参与','off')) +
+      `<div class="card" style="padding:42px;text-align:center;color:var(--text-3);font-size:13.5px">该询价单未在截止前提交报价，系统中不存在报价单，无打印内容。</div>`;
+  }
+  const d = QDETAIL[q.no] || {lose:[], lines:[]};
+  const loseSet = new Set(d.lose||[]);
+  const total = d.lines.reduce((s,l)=> s + (l.none ? 0 : l.q*(l.price||0)), 0);
+  const hideRes = q.st==='待公示' || q.st==='已提交';
+  const rows = d.lines.map((l,i)=>`<tr>
+      <td class="c">${i+1}</td>
+      <td>${l.n}<span style="color:var(--text-3)"> · ${l.s}</span></td>
+      <td class="c">${l.u}</td>
+      <td class="r">${l.q}</td>
+      <td class="r">${l.none?'—':money(l.price)}</td>
+      <td class="r">${l.none?'—':money(l.q*l.price)}</td>
+      <td>${l.none?'不报价':hideRes?'截止后公布':(loseSet.has(i)?'未中标':'已中标')}</td>
+    </tr>`).join('');
+  return pagehd('报价单打印预览',
+      `${q.no} · A4 纵向 · 单联 · 只读快照`,
+      `${backBtn}<button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
+      tag(q.st, q.cls)) +
+  `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">
+     本页按报价单 <b class="mono">${q.no}</b> 的提交快照出具：单价锁定，不随当前货品价格变化。${hideRes?'询价截止并由门店确认前，纸件不显示中标结果。':''}
+   </div>
+   <div style="background:#EDF1EF;border:1px solid var(--line-3);border-radius:var(--r-xl);padding:22px 20px">
+     <div class="a4">
+       <h2>报 价 单</h2>
+       <div class="sub">QUOTATION · 提交时锁定单价 · 只读快照</div>
+       <div class="hr"></div>
+       <div class="hd"><span>报价单号：<b style="color:var(--text-1)">${q.no}</b></span><span>关联询价单：<b style="color:var(--text-1)">${q.rfq}</b></span></div>
+       <div class="meta" style="grid-template-columns:repeat(3,1fr)">
+         <div><span>采购门店：</span><b>${q.store}</b></div>
+         <div><span>采购档口：</span><b>${q.stall}</b></div>
+         <div><span>提交时间：</span><b>${q.t}</b></div>
+         <div><span>提交人：</span><b>${d.submitter||'—'}</b></div>
+         <div><span>报价 / 采购行数：</span><b>${q.qLines} / ${q.lines}</b></div>
+         <div><span>报价合计：</span><b>${money(total)}</b></div>
+       </div>
+       <table>
+         <thead><tr>
+           <th style="width:32px">序号</th><th>商品 / 规格</th><th style="width:32px">单位</th>
+           <th style="width:52px">需求量</th><th style="width:78px">报价单价</th><th style="width:84px">金额</th><th style="width:80px">比价结果</th>
+         </tr></thead>
+         <tbody>${rows}
+           <tr><td colspan="5" class="r" style="font-weight:600">合计 ${d.lines.length} 行</td><td class="r" style="font-weight:600">${money(total)}</td><td></td></tr>
+         </tbody>
+       </table>
+       <div class="sign">
+         <div>供应商报价人签字：<div class="line"></div><span style="font-size:10px">日期：${q.t.slice(0,10)}</span></div>
+         <div>门店确认人签字：<div class="line"></div><span style="font-size:10px">日期：　　年　　月　　日</span></div>
+       </div>
+       <div class="foot">
+         1. 本单为供应商在截止时间前提交的报价快照，单价锁定，不随后续货品调价变化。<br>
+         2. 「不报价」行本轮未报；比价结果由门店在截止后统一公示，公示前纸件不显示中标信息。<br>
+         3. 本单一式单联：供应商留存，作为报价与中标结果的原始凭据。
+       </div>
+     </div>
+   </div>`;
+});
+
+/* ---------- K09 采购订单打印：下单承诺的 A4 纸件，明细与 D02 同源 ---------- */
+def('K09','采购订单打印','全局', ()=>{
+  const o = ordCurrent();
+  const lines = ordLines(o);
+  const backBtn = `<button class="btn btn-default" onclick="go('${PRINT_BACK}')">${I.back}${PRINT_BACK_LABEL[PRINT_BACK]||'返回'}</button>`;
+  const rows = lines.map(r=>{
+    const note = ordBuyerNote(o, r.i);
+    return `<tr>
+      <td class="c">${r.i}</td>
+      <td>${r.n}<span style="color:var(--text-3)"> · ${r.s}</span></td>
+      <td class="c">${r.u}</td>
+      <td class="r">${fmt(r.q)}</td>
+      <td class="r">${money(r.p)}</td>
+      <td class="r">${money(r.amt)}</td>
+      <td style="font-size:10px;color:${note?'#8A4B08':'var(--text-4)'}">${note?escHTML(note):'—'}</td>
+    </tr>`;
+  }).join('');
+  const type = o.type==='plan' ? '中标订单' : '门店直采单';
+  return pagehd('采购订单打印预览',
+      `${o.no} · A4 纵向 · 单联 · ${type}`,
+      `${backBtn}<button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
+      stTag(o.st)) +
+  `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">
+     本页按订单 <b class="mono">${o.no}</b> 出具：下单量按包装单位整件计数，金额由明细派生，与订单详情 / 发货 / 验收 / 对账同源；<b>不替代送货单</b>。
+   </div>
+   <div style="background:#EDF1EF;border:1px solid var(--line-3);border-radius:var(--r-xl);padding:22px 20px">
+     <div class="a4">
+       <h2>采 购 订 单</h2>
+       <div class="sub">PURCHASE ORDER · ${type} · 下单承诺</div>
+       <div class="hr"></div>
+       <div class="hd"><span>订单号：<b style="color:var(--text-1)">${o.no}</b></span><span>订单状态：<b style="color:var(--text-1)">${stLabel(o.st)}</b></span></div>
+       <div class="meta" style="grid-template-columns:repeat(3,1fr)">
+         <div><span>采购门店：</span><b>${o.store}</b></div>
+         <div><span>采购档口：</span><b>${o.stall}</b></div>
+         <div><span>订单类型：</span><b>${type}</b></div>
+         <div><span>配送日期：</span><b>2026-${o.date}</b></div>
+         <div><span>确认时间：</span><b>${o.confirmedAt||'—'}</b></div>
+         <div><span>订单金额：</span><b>${money(o.amt)}</b></div>
+       </div>
+       <table>
+         <thead><tr>
+           <th style="width:32px">序号</th><th>商品 / 规格</th><th style="width:32px">单位</th>
+           <th style="width:52px">下单量</th><th style="width:78px">单价</th><th style="width:84px">金额</th><th>下单备注</th>
+         </tr></thead>
+         <tbody>${rows}
+           <tr><td colspan="5" class="r" style="font-weight:600">合计 ${lines.length} 行</td><td class="r" style="font-weight:600">${money(o.amt)}</td><td></td></tr>
+         </tbody>
+       </table>
+       <div class="sign">
+         <div>供应商确认：<div class="line"></div><span style="font-size:10px">日期：　　年　　月　　日</span></div>
+         <div>门店确认：<div class="line"></div><span style="font-size:10px">日期：　　年　　月　　日</span></div>
+       </div>
+       <div class="foot">
+         1. 本单为门店采购承诺：数量按件 / 包 / 袋 / 箱 / 桶等包装单位整件计数，单价可到分；金额 = Σ（下单量 × 单价）。<br>
+         2. 下单备注为门店下单原文，供应端只读；实际发货量与差异以确认发货后的送货单为准。<br>
+         3. 本单一式单联：供应商与门店各留存一份，作为订单履约与对账依据。
+       </div>
+     </div>
+   </div>`;
+});
 
 /* ============================================================
    V2 · 全量页面（补齐侧栏四组 · 十二模块）
@@ -7802,7 +7933,7 @@ def('C06','报价单详情','询价与报价', ()=>{
 
   const head = `${q.store} · <b>${q.stall}</b> · ${q.lines} 行 · 提交于 <b>${q.t}</b> · ${pending?'<b>已截止</b>，待门店确认后公示结果':openRfq?'<b>询价进行中</b>，比价结果截止后公布':`比价结果 <b>${won} 中标 / ${loseN} 未中</b>`}`;
   const btns = `<button class="btn btn-default" onclick="go('C05')">${I.back}返回列表</button>
-       <button class="btn btn-default" onclick="toast('已下载报价单 PDF')">${I.print}下载</button>
+       <button class="btn btn-default" onclick="goQuotePrint('C06')">${I.print}打印</button>
        ${q.st==='已提交'
          ? `<button class="btn btn-primary" onclick="go('C03')">修改报价</button>`
          : pending
@@ -9168,7 +9299,7 @@ def('E07','分拣单打印','发货与分拣', ()=>{
         </div>
       </div>
       <div style="margin-top:8px;font-size:9.5px;color:#999;border-top:1px dashed #ccc;padding-top:6px">
-        本单不含价格信息，请勿用于对账 · 数据来源：数智餐厅供应管理平台 · 打印时间 2026-10-27 05:02
+        本单不含价格信息，请勿用于对账 · 数据来源：数智餐饮供应管理平台 · 打印时间 2026-10-27 05:02
       </div>
     </div>
   </div>
@@ -10600,9 +10731,11 @@ def('I01','打印模板','打印与模板', ()=>{
     {n:'箱贴标签 · 80×60',     doc:'标签',     size:'80×60', copy:'单张', store:'三店启用', t:'2026-10-02', st:'使用中', cls:'done'},
     {n:'对账单 · A4 纵',       doc:'对账单',   size:'A4 纵', copy:'单联', store:'财务通用', t:'2026-09-25', st:'使用中', cls:'done'},
     {n:'结算单 · A4 纵',       doc:'结算单',   size:'A4 纵', copy:'两联', store:'财务通用', t:'2026-09-25', st:'使用中', cls:'done'},
-    {n:'报价单 · 旧版',        doc:'报价单',   size:'A4 纵', copy:'单联', store:'已停用',   t:'2026-08-10', st:'已停用', cls:'off'}
-  ].map(r=>`
-    <tr>
+    {n:'报价单 · 标准 A4 纵',  doc:'报价单',   size:'A4 纵', copy:'单联', store:'供应商通用', t:'2026-10-22', st:'使用中', cls:'done'},
+    {n:'采购订单 · 标准 A4 纵',doc:'采购订单', size:'A4 纵', copy:'单联', store:'供应商通用', t:'2026-10-22', st:'使用中', cls:'done'}
+  ].map(r=>{
+    const pv = r.doc==='报价单' ? "goQuotePrint('I01')" : r.doc==='采购订单' ? "goOrderPrint('I01')" : "goK05('I01')";
+    return `<tr>
       <td class="nm"><b>${r.n}</b><span>最后修改 ${r.t}</span></td>
       <td><span class="tag gray">${r.doc}</span></td>
       <td class="mono">${r.size}</td>
@@ -10610,28 +10743,29 @@ def('I01','打印模板','打印与模板', ()=>{
       <td style="font-size:12.5px;color:var(--text-3)">${r.store}</td>
       <td>${tag(r.st, r.cls)}</td>
       <td class="r">
-        <span class="link" onclick="goK05('I01')">预览</span>
+        <span class="link" onclick="${pv}">预览</span>
         <span style="color:var(--line);margin:0 6px">|</span>
         <span class="link" onclick="go('I02')">编辑</span>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   return pagehd('打印模板',
-      `覆盖 <b>6 类单据</b> · 8 套模板 · 按门店自动匹配 · 改模板不追溯已出单据`,
+      `覆盖 <b>7 类单据</b> · 9 套模板 · 按门店自动匹配 · 改模板不追溯已出单据`,
       `<button class="btn btn-default" onclick="go('I03')">打印记录</button>
        <button class="btn btn-primary" onclick="toast('已复制模板，可在编辑器中修改')">${I.plus}复制模板</button>`) +
   `
 
   <div class="stats" style="grid-template-columns:repeat(4,1fr)">
-    ${kpi('模板数', '8', '套', '7 套使用中 · 1 套停用')}
-    ${kpi('覆盖单据', '6', '类', '送货 / 分拣 / 标签 / 对账 / 结算 / 报价')}
+    ${kpi('模板数', '9', '套', '8 套使用中 · 1 套停用')}
+    ${kpi('覆盖单据', '7', '类', '送货 / 分拣 / 标签 / 对账 / 结算 / 报价 / 采购订单')}
     ${kpi('本月打印', '1,284', '张', '其中送货单 486 张')}
     ${kpi('打印失败', '3', '张', '卡纸 2 · 缺纸 1')}
   </div>
 
   <div class="card pad0">
     <div class="tb2">
-      <select class="select" style="width:130px"><option>全部单据</option><option>送货单</option><option>分拣单</option><option>标签</option><option>对账单</option><option>结算单</option></select>
+      <select class="select" style="width:130px"><option>全部单据</option><option>送货单</option><option>分拣单</option><option>标签</option><option>对账单</option><option>结算单</option><option>报价单</option><option>采购订单</option></select>
       <input class="input" style="width:180px" placeholder="模板名称">
       <span class="grow"></span>
       <span class="hint">模板与门店的绑定在「客户与权限」里维护</span>
@@ -10645,7 +10779,7 @@ def('I01','打印模板','打印与模板', ()=>{
       <tbody>${tpls}</tbody>
     </table></div>
     <div class="sum-bar">
-      <span>8 套模板</span>
+      <span>9 套模板</span>
       <span>送货单 3 套（按门店匹配）</span>
       <span style="margin-left:auto;color:var(--text-4)">同一门店只能绑定一套送货单模板</span>
     </div>
@@ -11716,7 +11850,9 @@ const SDESC = {
   K04:'单据编号全局可搜，⌘K 直达',
   K05:'按确认发货时生成的送货单渲染的随货同行联',
   K06:'7 个问题 = 这套系统的全部设计逻辑',
-  K07:'4 类单据 18 个状态的颜色语义'
+  K07:'4 类单据 18 个状态的颜色语义',
+  K08:'报价提交快照的 A4 纵向报价单纸件',
+  K09:'下单承诺的 A4 纵向采购订单纸件'
 };
 
 def('K01','全局框架说明','全局', ()=>{
@@ -11969,6 +12105,7 @@ C06:[
   ["档口归属","页头「门店 · 档口」标识本单归属，同店其他档口单据不共享报价；档口不单独做筛选。"],
   ["未中标原因","未中标显示与中标价的差额（如 ¥0.12）；差额过大的仅提示「价格明显偏高」，不显示对手价。"],
   ["中标生成","系统按中标结果生成订单并写入「中标即确认」流转记录，无需确认、不可拒绝。同一时刻自动生成唯一待发货单；供不上走缺货预告或差异备注。"],
+  ["打印模板","「打印」打开 A4 纵向报价单模板（K08），按提交快照出具：单价锁定、不取当前货品价格；比价结果未公示时纸件同样不显示。"],
 ],
 
 C07:[
@@ -11988,6 +12125,7 @@ D02:[
   ["中标订单约束","中标即履约，流转记录记「中标即确认」，不可确认、拒绝或取消。供不上走缺货预告与差异备注。仅门店直采单在待确认时可确认或拒绝，不可改量或议价。"],
   ["配送日期与送达时间","门店下单仅填<b>配送日期</b>，D01 / D02 与订单导出统一使用该字段名。<b>送达时间</b>为发货单上 E02 选填的实际到店时刻（时分），E01 列表拼成「配送时间」（如 2026-10-26 7:00），E04 与 K05 同步显示，未填仅显示日期。<b>发货日期由配送日期自动带入发货单，不可修改</b>，非门店配送时段或线路排线。"],
   ["一期不设截止字段","不设「发货截止」「预告截止」字段与倒计时。订单过配送日期未发货自动置「已关闭」，不进备货、发货与对账。缺货预告在<b>未发货前</b>均可上报，不设 16:00 截止、不标「迟预告」；确认发货后入口关闭。"],
+  ["打印模板","「打印」打开 A4 纵向采购订单模板（K09），按当前订单号与明细出具：数量 / 金额口径与详情一致；不替代送货单。"],
 ],
 
 D03:[
@@ -12163,6 +12301,7 @@ I01:[
   ["模板模块定位","生鲜场景中<b>纸质单据为法律凭据</b>（食堂签收纸件），模板错误即证据错误；模板为业务基线，非一般设置项。"],
   ["模板匹配","一张送货单仅命中一个模板，自上而下<b>命中即停</b>：门店单独指定 > 品类规则 > 全局默认。"],
   ["打印方式","一期用浏览器原生打印，不接打印机驱动；型号、纸型仅作<b>记录</b>，排版由浏览器决定，边距由模板控制。"],
+  ["预览分流","模板列表「预览」按单据类型打开对应模板：报价单→K08、采购订单→K09；分拣单 / 标签 / 对账单 / 结算单本期沿用送货单预览（K05）。"],
 ],
 
 I02:[
@@ -12231,6 +12370,16 @@ K04:[
 K05:[
   ["打印结构","送货单为发货单的纸质镜像；差异分两段：上半段<b>已提前告知</b>（食堂已知），下半段<b>其他差异</b>（当场知晓），便于判断签收。"],
   ["生成条件","仅确认发货后生成；未确认时本页标注「未生成」，内容为预览、不可作随货凭证。生成后按冻结数据出具，抬头、明细与两段差异取自该单，不随后续修改变化。"],
+],
+
+K08:[
+  ["模板用途","报价单打印为提交时刻的只读快照，单价锁定；不取当前货品价格，不写回报价数据。"],
+  ["结果脱敏","询价进行中 / 待公示时纸件不显示中标结果，与 C06 页内展示口径一致。"],
+],
+
+K09:[
+  ["模板用途","采购订单打印为下单承诺的 A4 单联纸件，按订单号与明细出具，数量 / 金额口径同 D02。"],
+  ["边界","订单打印不替代送货单；实发量与差异仅在确认发货后的 K05 送货单体现。"],
 ],
 
 K06:[
