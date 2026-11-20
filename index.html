@@ -2501,86 +2501,75 @@ function shipAutoCloseExpired(){
    导出 · 原 D04「订单导出」独立页已撤销，能力全部并入 D01。
    导出是列表的下游动作：条件沿用当前筛选，不再让用户重填一遍。
    ------------------------------------------------------------ */
-const EXPORT_FIELDS = ['订单号','订单类型','采购门店','配送日期','行数','下单量','单价','预估金额','实际结算金额','状态','缺货预告行数','差异备注'];
-const EXPORT_HISTORY = [
-  {f:'order_detail_20261026.xlsx', t:'2026-10-26 21:10', u:'李敏', n:'186 行', c:'8 个字段'},
-  {f:'order_detail_20261019.xlsx', t:'2026-10-19 18:32', u:'李敏', n:'142 行', c:'8 个字段'},
-  {f:'order_settle_20261001.xlsx', t:'2026-10-01 09:15', u:'张伟', n:'412 行', c:'12 个字段'}
-];
+/* ------------------------------------------------------------
+   导出 · 原 D04「订单导出」独立页已撤销，能力全部并入 D01。
+   导出是列表的下游动作：直接按「当前列表查询结果」生成文件，无二次确认。
+   ------------------------------------------------------------ */
+/* 当前列表筛选条件：查询 / 重置写入这里，重渲染与导出共用同一份口径。 */
+let D01_FILTER = {type:'', st:'', store:'', date0:'', date1:'', kw:''};
 function ordFilter(){
-  const v = id => { const e = document.getElementById(id); return e ? String(e.value||'').trim() : ''; };
-  /* 配送日期改为起止区间（默认均为空 = 不限），导出对话框沿用同一组条件 */
-  return {type:v('f-type'), st:v('f-status'), store:v('f-store'), date0:v('f-date0'), date1:v('f-date1'), kw:v('f-kw')};
+  /* 「全部类型 / 全部状态 / 全部门店」是不带 value 的占位项，读出来是字面量，统一归一为空 = 不限。 */
+  const v = (id, all) => {
+    const e = document.getElementById(id); if(!e) return '';
+    const s = String(e.value||'').trim();
+    return (all && s===all) ? '' : s;
+  };
+  return {type:v('f-type','全部类型'), st:v('f-status','全部状态'), store:v('f-store','全部门店'),
+          date0:v('f-date0'), date1:v('f-date1'), kw:v('f-kw')};
 }
-function exportRecRows(){
-  return EXPORT_HISTORY.map(h=>`
-    <tr><td class="name mono">${h.f}</td><td class="mono" style="color:var(--text-3)">${h.t}</td>
-      <td>${h.u}</td><td class="mono r">${h.n}</td><td style="font-size:12.5px;color:var(--text-3)">${h.c}</td>
-      <td class="r"><span class="link" onclick="toast('开始重新下载')">重新下载</span></td></tr>`).join('');
+function d01Query(){ D01_FILTER = ordFilter(); go('D01'); }
+function d01Reset(){ D01_FILTER = {type:'', st:'', store:'', date0:'', date1:'', kw:''}; go('D01'); }
+/* 行数据口径单一来源：列表渲染与导出都走这里，金额 / 售后数不各算各的。 */
+function d01RowData(o){
+  const sh = shipOf(o.no);
+  const ys = sh ? ysOf(sh) : null;
+  return {ysAmt: ys ? ys.amt : null,
+          retN: ys ? RETURNS.filter(r=>r.ys===ys.no && r.st==='已同意').length : 0};
 }
-function exFieldCnt(){
-  const e = document.getElementById('ex-fcnt');
-  if(e) e.textContent = document.querySelectorAll('.ex-f:checked').length;
+/* 当前列表查询结果：筛选条件来自 D01_FILTER，导出范围与可见行严格一致。 */
+function d01Rows(){
+  const f = D01_FILTER;
+  return ORDERS.filter(o=>{
+    if(f.type && ORD_TYPE[o.type].label !== f.type) return false;
+    if(f.st && stLabel(o.st) !== f.st) return false;
+    if(f.store && o.store !== f.store) return false;
+    const day = '2026-'+o.date;
+    if(f.date0 && day < f.date0) return false;
+    if(f.date1 && day > f.date1) return false;
+    if(f.kw && o.no.toLowerCase().indexOf(String(f.kw).toLowerCase()) < 0) return false;
+    return true;
+  });
 }
-function exportDlg(){
-  const f = ordFilter();
-  modal('导出订单明细', `
-    <div class="banner info" style="margin-bottom:16px">${I.info}
-      <div>已沿用<b>订单列表当前筛选条件</b>：<span id="ex-summary" class="mono"></span>。导出是<b>只读</b>操作，不改单据状态、不触发通知。</div>
-    </div>
-    <div class="grid2" style="gap:14px 16px">
-      <div class="field"><label><span class="req">*</span>开始日期</label><input class="input" id="ex-d1" type="date" value="2026-10-01"></div>
-      <div class="field"><label><span class="req">*</span>结束日期</label><input class="input" id="ex-d2" type="date" value="2026-10-26"></div>
-      <div class="field"><label>门店</label><select class="select" id="ex-store"><option>全部门店</option>${STORES.map(s=>`<option>${s.n}</option>`).join('')}</select></div>
-      <div class="field"><label>订单类型</label><select class="select" id="ex-type"><option>全部类型</option><option>门店直采</option><option>询价中标</option></select></div>
-      <div class="field"><label>订单状态</label><select class="select" id="ex-status"><option>全部状态</option>${STATUS_OPTIONS}</select></div>
-      <div class="field"><label>关键词</label><input class="input" id="ex-kw" placeholder="订单号"></div>
-    </div>
-    <div style="margin-top:16px">
-      <div class="hint" style="margin-bottom:8px">导出字段 <span style="margin-left:6px">已勾 <b id="ex-fcnt">8</b> / ${EXPORT_FIELDS.length} 项</span></div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px;font-size:13px">
-        ${EXPORT_FIELDS.map((x,i)=>`<label class="chk"><input type="checkbox" class="ex-f" ${i<8?'checked':''} onchange="exFieldCnt()"> ${x}</label>`).join('')}
-      </div>
-      <div class="hint" style="margin-top:8px">「实际结算金额」只在已完成订单中有值；「缺货预告行数」是唯一能证明提前告知的字段，建议一直勾上。结算金额按验收合格量算，对账请用后者。</div>
-    </div>
-    <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
-      <div class="hint" style="margin-bottom:8px">导出记录 <span style="margin-left:6px">近 30 天 · 保留 90 天 · 单次上限 5,000 行</span></div>
-      <div class="tbl-wrap"><table class="tbl compact">
-        <thead><tr><th>文件名</th><th>导出时间</th><th>操作人</th><th class="r">行数</th><th>字段</th><th class="r">操作</th></tr></thead>
-        <tbody id="ex-rec">${exportRecRows()}</tbody>
-      </table></div>
-    </div>`,
-    `<button class="btn btn-default" onclick="closeModal()">取消</button>
-     <button class="btn btn-primary" onclick="exportDo()">${I.down}导出 XLSX</button>`, true);
-  const set = (id, val) => { const e = document.getElementById(id); if(e && val) e.value = val; };
-  set('ex-store', f.store); set('ex-type', f.type); set('ex-status', f.st);
-  set('ex-d1', f.date0); set('ex-d2', f.date1); set('ex-kw', f.kw);
-  const dateTxt = (f.date0||f.date1)
-    ? ('配送日期 '+(f.date0||'不限')+' ~ '+(f.date1||'不限'))
-    : '全部日期';
-  const sum = document.getElementById('ex-summary');
-  if(sum) sum.textContent = [f.type||'全部类型', f.st||'全部状态', f.store||'全部门店',
-    dateTxt, f.kw ? ('关键词「'+f.kw+'」') : '不限关键词'].join(' · ');
-}
-function exportDo(){
-  const n = document.querySelectorAll('.ex-f:checked').length;
-  if(!n){ toast('至少勾选一个导出字段','err'); return; }
-  const d2 = (document.getElementById('ex-d2')||{}).value || '2026-10-26';
-  EXPORT_HISTORY.unshift({f:'order_detail_'+d2.replace(/-/g,'')+'.xlsx', t:d2+' 19:44', u:'李敏', n:'186 行', c:n+' 个字段'});
-  const rec = document.getElementById('ex-rec'); if(rec) rec.innerHTML = exportRecRows();
-  closeModal(); toast('已生成订单明细.xlsx · 186 行 · '+n+' 个字段，可在导出记录中重新下载');
+function d01Export(){
+  const list = d01Rows();
+  if(!list.length){ toast('当前查询结果为空，无可导出数据','err'); return; }
+  const head = ['订单号','订单类型','采购门店','采购档口','配送日期','行数','预估金额','验收总金额','状态','售后情况'];
+  const esc = v => { const s = String(v==null?'':v); return /[",\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const lines = [head.map(esc).join(',')];
+  list.forEach(o=>{
+    const d = d01RowData(o);
+    lines.push([o.no, ORD_TYPE[o.type].label, o.store, o.stall, o.date, o.lines,
+      money(o.amt), d.ysAmt==null?'-':money(d.ysAmt), stLabel(o.st), d.retN+' 条'].map(esc).join(','));
+  });
+  const csv = '\uFEFF' + lines.join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = '订单中心_当前查询结果_'+list.length+'条.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  toast('已直接导出当前查询结果 '+list.length+' 条订单');
 }
 
 def('D01','订单中心', '订单中心', ()=>{
-  const waitN = ORDERS.filter(isTodo).length;
-  const wfN = ORDERS.filter(isWithdrawReq).length;
-  const rows = ORDERS.map(o=>{
-    /* 验收总金额：取该订单对应发货单关联的验收单结算金额；尚无验收单（未进入已完成）则为空，显示 -。
-       售后情况：统计该验收单下「已同意」的退货申请条数（已同意 = 退款/结算扣减已生效，视为已完成）。 */
-    const sh = shipOf(o.no);
-    const ys = sh ? ysOf(sh) : null;
-    const ysAmt = ys ? ys.amt : null;
-    const retN = ys ? RETURNS.filter(r=>r.ys===ys.no && r.st==='已同意').length : 0;
+  const list = d01Rows();
+  const waitN = list.filter(isTodo).length;
+  const wfN = list.filter(isWithdrawReq).length;
+  const rows = list.map(o=>{
+    /* 验收总金额与售后条数与导出共用同一份行口径 */
+    const d = d01RowData(o);
+    const ysAmt = d.ysAmt;
+    const retN = d.retN;
     return `
     <tr>
       <td class="name">${o.no}</td>
@@ -2599,20 +2588,20 @@ def('D01','订单中心', '订单中心', ()=>{
 
   return pagehd('订单中心',
       `询价中标订单由中标结果生成、门店直采订单由门店提交`,
-      `<button class="btn btn-default" onclick="exportDlg()" title="沿用当前列表筛选条件导出">${I.down}导出</button>
+      `<button class="btn btn-default" onclick="d01Export()" title="直接导出当前列表查询结果">${I.down}导出</button>
        <button class="btn btn-default" onclick="go('D12')">${I.lock}接单设置</button>`) +
   `<div class="card pad0">
     <div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap">
-      <select class="select" id="f-type" style="width:132px"><option>全部类型</option><option>门店直采</option><option>询价中标</option></select>
-      <select class="select" id="f-status" style="width:132px"><option>全部状态</option>${STATUS_OPTIONS}</select>
-      <select class="select" id="f-store" style="width:150px"><option>全部门店</option>${STORES.map(s=>`<option>${s.n}</option>`).join('')}</select>
+      <select class="select" id="f-type" style="width:132px">${['全部类型','门店直采','询价中标'].map(x=>`<option ${x===(D01_FILTER.type||'全部类型')?'selected':''}>${x}</option>`).join('')}</select>
+      <select class="select" id="f-status" style="width:132px"><option ${!D01_FILTER.st?'selected':''}>全部状态</option>${Object.keys(ORDER_STATUS).map(k=>`<option value="${stLabel(k)}" ${D01_FILTER.st===stLabel(k)?'selected':''}>${stLabel(k)}</option>`).join('')}</select>
+      <select class="select" id="f-store" style="width:150px"><option ${!D01_FILTER.store?'selected':''}>全部门店</option>${STORES.map(s=>`<option ${D01_FILTER.store===s.n?'selected':''}>${s.n}</option>`).join('')}</select>
       <span class="hint" style="margin-right:2px">配送日期</span>
-      <input class="input" id="f-date0" style="width:130px" type="date">
+      <input class="input" id="f-date0" style="width:130px" type="date" value="${D01_FILTER.date0}">
       <span style="color:var(--text-3)">~</span>
-      <input class="input" id="f-date1" style="width:130px" type="date">
-      <input class="input" id="f-kw" style="width:196px" placeholder="订单号">
-      <button class="btn btn-primary sm" onclick="toast('已按条件查询')">查询</button>
-      <button class="btn btn-default sm" onclick="toast('已重置')">重置</button>
+      <input class="input" id="f-date1" style="width:130px" type="date" value="${D01_FILTER.date1}">
+      <input class="input" id="f-kw" style="width:196px" placeholder="订单号" value="${D01_FILTER.kw}">
+      <button class="btn btn-primary sm" onclick="d01Query()">查询</button>
+      <button class="btn btn-default sm" onclick="d01Reset()">重置</button>
     </div>
     <div class="tbl-wrap"><table class="tbl">
       <thead><tr>
@@ -2622,7 +2611,7 @@ def('D01','订单中心', '订单中心', ()=>{
       <tbody>${rows}</tbody>
     </table></div>
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-top:1px solid var(--line)">
-      <span class="hint">共 ${ORDERS.length} 条记录 · 待处理 ${waitN} 条</span>
+      <span class="hint">共 ${list.length} 条记录 · 待处理 ${waitN} 条${D01_FILTER.type||D01_FILTER.st||D01_FILTER.store||D01_FILTER.date0||D01_FILTER.date1||D01_FILTER.kw?'（已筛选）':''}</span>
       <div style="display:flex;gap:6px;align-items:center">
         <select class="select" style="width:104px;height:28px;font-size:12.5px"><option>20 条/页</option><option>50 条/页</option></select>
         <button class="btn btn-default xs">上一页</button>
@@ -7893,7 +7882,6 @@ def('C06','报价单详情','询价与报价', ()=>{
   const loseN = d.lines.filter((l,i)=>!l.none && loseSet.has(i)).length;
   const noneN = d.lines.filter(l=>l.none).length;
   const total = d.lines.reduce((s,l)=> s + (l.none ? 0 : (l.q*(l.price||0))), 0);
-  const loseWhy = q.st==='未中标' ? '价格高于均价 8%' : '价格高于中标价';
   /* 待公示 = 已提交且已截止，但门店还没确认报价 —— 比价结果此时不对外展示 */
   const pending = q.st==='待公示';
   /* 已提交 = 询价还没截止，报价单还能改 —— 比价压根还没开始，
@@ -7902,7 +7890,6 @@ def('C06','报价单详情','询价与报价', ()=>{
   const hideRes = pending || openRfq;
   const maskTag = pending ? '<span style="color:var(--text-4)">待公示</span>'
                           : '<span style="color:var(--text-4)">截止后比价</span>';
-  const maskWhy = pending ? '门店确认后公示' : '询价进行中，截止后由门店比价';
   /* 报价行排序：可报（供）的排前面、不可供（不报价）的置后，组内保持原顺序 ——
      每次进入/刷新本页都按此顺序渲染，不可供行始终落在表格末尾 */
   const dIdxs = d.lines.map((l,i)=>i).sort((a,b)=>
@@ -7916,7 +7903,6 @@ def('C06','报价单详情','询价与报价', ()=>{
       <td class="mono r">${l.q}</td>
       <td class="mono r" colspan="2" style="color:var(--text-4)">不可供 / 不报价</td>
       <td>${tag('不报价','off')}</td>
-      <td style="font-size:12.5px;color:var(--text-3)">本轮未报价</td>
     </tr>`;
     const isLose = loseSet.has(i);
     return `<tr>
@@ -7927,7 +7913,6 @@ def('C06','报价单详情','询价与报价', ()=>{
       <td class="mono r">¥${l.price.toFixed(2)}</td>
       <td class="mono r name">¥${(l.q*l.price).toFixed(2)}</td>
       <td>${hideRes?maskTag:(isLose?tag('未中标','err'):tag('已中标','done'))}</td>
-      <td style="font-size:12.5px;color:var(--text-3)">${hideRes?maskWhy:(isLose?loseWhy:'—')}</td>
     </tr>`;
   }).join('');
 
@@ -7967,7 +7952,7 @@ def('C06','报价单详情','询价与报价', ()=>{
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr>
           <th class="c" style="width:46px">序号</th><th>商品 / 规格</th><th class="c">单位</th><th class="r">需求量</th>
-          <th class="r">报价单价</th><th class="r">金额</th><th style="width:100px">比价结果</th><th>说明</th>
+          <th class="r">报价单价</th><th class="r">金额</th><th style="width:100px">比价结果</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
@@ -11970,10 +11955,10 @@ D01:[
 ["发货单自动生成",'门店直采订单<b>确认接单</b>、询价中标订单<b>中标生成</b>时，系统自动创建唯一一张「待发货」发货单。关联关系为系统不变量，供应端无人工创建发货单入口。'],
 ["发货次数约束",'一张订单对应一张发货单，仅确认发货一次；不分批、不拆单、不追加。短装按实发量结算；补发另开订单，由其生成新的发货单与送货单。'],
 ["三个统计视角",'D01 一行一笔订单；按门店看备货用「备货参考」，按商品看分拣用「分拣作业」。'],
-["导出入口合并",'导出为列表下游动作，弹层沿用 D01 当前筛选；订单中心仅有 D01 一个导出入口，字段、记录与留痕在弹层内完成。'],
-["导出字段口径",'<b>预估金额</b>按下单量计算，<b>结算金额</b>按验收合格量计算，对账用后者。跨月按「配送日期」与「验收日期」筛选结果不同。<b>缺货预告行数</b>为提前告知的证明字段。'],
-["导出只读约束",'导出为<b>只读</b>操作，不改单据状态、不触发通知；单次上限 <b>5,000 行</b>，超限按配送日拆分。导出记录含操作人与时间，用于追溯。'],
-["列表字段范围",'列表保留订单号、类型、门店 / 档口、配送日期、行数、金额、状态。上游单据（门店采购计划 / 直采申请）不展示、不筛选、不导出。门店下单只到日期；发货单「送达时间」在 E01 拼入「配送时间」，订单中心与导出字段统一为「配送日期」。'],
+["导出入口合并",'导出为列表下游动作：点击「导出」直接按当前列表查询结果生成文件，无二次确认；订单中心仅有 D01 一个导出入口。'],
+["导出字段口径",'固定导出列表可见口径：订单号 / 类型 / 门店 / 档口 / 配送日期 / 行数 / 预估金额 / 验收总金额 / 状态 / 售后情况。<b>预估金额</b>按下单量计算，<b>验收总金额</b>按验收合格量计算，对账用后者。'],
+["导出只读约束",'导出为<b>只读</b>操作，不改单据状态、不触发通知；单次上限 <b>5,000 行</b>，超限按配送日拆分。'],
+["列表字段范围",'列表保留订单号、类型、门店 / 档口、配送日期、行数、金额、状态。查询 / 重置按类型、状态、门店、配送日期起止与订单号真实过滤，汇总数量与导出范围均取筛选结果。上游单据（门店采购计划 / 直采申请）不展示、不筛选、不导出。门店下单只到日期；发货单「送达时间」在 E01 拼入「配送时间」，订单中心与导出字段统一为「配送日期」。'],
 ["状态变更入口",'列表只做检索与定位；确认 / 拒绝在详情页按当前状态开放：待确认可确认 / 拒绝，已确认可缺货预告与查看发货单，终态只读。'],
 ["不提供批量确认",'确认即承诺，确认后不可改、不可取消。一期仅支持详情页逐单确认，不提供批量操作。'],
 ],
@@ -12103,7 +12088,6 @@ C06:[
   ["快照只读","本页为提交时刻的只读快照，记录提交时间、单价、不报价标记，任何角色不可修改。报价有误只能在比价完成前联系运营撤回，并留痕。"],
   ["行数口径",'<b>报价行数 / 采购行数</b>并列：前者为已报行数，后者为门店需求行数，不随报价变化。快照锁定当时数值，后续门店改明细不回溯。'],
   ["档口归属","页头「门店 · 档口」标识本单归属，同店其他档口单据不共享报价；档口不单独做筛选。"],
-  ["未中标原因","未中标显示与中标价的差额（如 ¥0.12）；差额过大的仅提示「价格明显偏高」，不显示对手价。"],
   ["中标生成","系统按中标结果生成订单并写入「中标即确认」流转记录，无需确认、不可拒绝。同一时刻自动生成唯一待发货单；供不上走缺货预告或差异备注。"],
   ["打印模板","「打印」打开 A4 纵向报价单模板（K08），按提交快照出具：单价锁定、不取当前货品价格；比价结果未公示时纸件同样不显示。"],
 ],
