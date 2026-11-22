@@ -742,8 +742,10 @@ tr.is-void td:first-child{box-shadow:inset 3px 0 0 #DC2626}
 .a4 .foot{margin-top:12px;padding-top:8px;border-top:1px dashed #C9D9CF;font-size:10px;color:var(--text-4);line-height:1.7}
 
 /* ============ 原型导航浮层 ============ */
+/* 原型导航浮层：按钮固定在顶部居中，面板向下展开。
+   DOM 中 panel 在前、button 在后，column-reverse 反转后视觉上按钮在上、面板在下。 */
 .navfab{
-  position:fixed;right:20px;bottom:20px;z-index:90;display:flex;flex-direction:column;align-items:flex-end;gap:10px;
+  position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:90;display:flex;flex-direction:column-reverse;align-items:center;gap:10px;
 }
 .navfab-btn{
   height:40px;padding:0 16px;border-radius:var(--r-pill);background:var(--text-1);color:#fff;
@@ -1598,7 +1600,7 @@ def('A02','工作台','工作台', ()=>{
     ['PO-20261026-0081','徐汇滨江店','7 行差异备注待核对','差异待说明','wait','A05'],
     ['PO-20261026-0076','徐汇滨江店','验收有 2 行扣减，可查看明细','验收差异','err','F01'],
     ['TH-20261026-0006','长宁来福士店', pendN+' 笔退货待确认 · 合计 ¥'+pendAmt,'退货待处理','wait','A06'],
-    ...wfOrders.map(o=>[o.no, o.store, '门店申请撤回 · 同意后将退回待确认并作废原发货单', '申请撤回', 'warn', 'D01'])
+    ...wfOrders.map(o=>[o.no, o.store, '门店申请撤回 · 同意后将退回待确认并关闭原发货单', '申请撤回', 'warn', 'D01'])
   ].map((r,i)=>`
     <div class="dash-row" onclick="${r[5]==='D05'?`goD05('${r[0]}','A02')`:`go('${r[5]}')`}">
       <div class="idx">${i+1}</div>
@@ -2453,16 +2455,16 @@ function ordRejectDo(no){
   CUR_ORDER_NO = no;
   closeModal(); toast('订单 '+no+' 已拒绝 · 门店端同步为「已拒绝」'); go('D02');
 }
-/* 门店直采单在「已确认」后被门店申请撤回：供应商同意才退回待确认并作废原发货单。
+/* 门店直采单在「已确认」后被门店申请撤回：供应商同意才退回待确认并关闭原发货单。
    仅 type:'direct' 且已确认且挂有 withdraw 申请时成立（isWithdrawReq）。
-   注意：作废只是逻辑删除（del:true），shipOf / shipAudit / E01 都会忽略它，
-   因此门店再次确认时会由 shipAutoCreate 生成一张全新的发货单，满足「新的一张」。 */
+   原发货单置「已关闭」（st=CLOSED + del:true）：E01 仍以「已关闭」展示供追溯，
+   但 del:true 让它退出 shipOf / shipAudit / 待发货统计，门店再次确认时由 shipAutoCreate 生成全新一张。 */
 function ordWithdrawAgree(no){
   const o = ORDERS.find(x=>x.no===no);
   if(!o || !isWithdrawReq(o)){ toast('该订单无待处理的撤回申请','err'); return; }
   const sh = shipOf(o.no);
   modal('同意门店撤回 · '+no, `
-    <div class="hint" style="line-height:1.9">门店已申请撤回该直采单（${o.store} · ${o.stall}），订单目前仍处「已确认」并挂有一张待发货单。<br>同意后：① 订单退回「待确认」，门店可重新提交；② 原发货单 <b>${sh?sh.no:'—'}</b> 作<b>废（逻辑删除，不可恢复）</b>；③ 若门店再次确认，系统将生成<b>全新一张</b>发货单。</div>
+    <div class="hint" style="line-height:1.9">门店已申请撤回该直采单（${o.store} · ${o.stall}），订单目前仍处「已确认」并挂有一张待发货单。<br>同意后：① 订单退回「待确认」，门店可重新提交；② 原发货单 <b>${sh?sh.no:'—'}</b> 置为<b>「已关闭」</b>（不可恢复，仍在发货管理中留痕可查）；③ 若门店再次确认，系统将生成<b>全新一张</b>发货单。</div>
     <div class="field" style="margin-top:12px"><label>处理说明 <span class="hint">（选填）</span></label><input class="input" id="wf-note" placeholder="同意撤回的处理依据，便于追溯"></div>`,
     `<button class="btn btn-default" onclick="closeModal()">取消</button>
      <button class="btn btn-primary" onclick="ordWithdrawAgreeDo('${no}')">确认同意撤回</button>`, true);
@@ -2484,7 +2486,7 @@ function ordWithdrawAgreeDo(no){
   o.st='PENDING_CONFIRM';
   o.confirmedAt = null; o.confirmSource = null;
   CUR_ORDER_NO = no;
-  closeModal(); toast('已同意门店撤回 · 订单 '+no+' 退回待确认，原发货单已作废'); go('D02');
+  closeModal(); toast('已同意门店撤回 · 订单 '+no+' 退回待确认，原发货单已关闭'); go('D02');
 }
 
 /* 系统兜底：订单过了配送日期仍未发货，自动置为「已关闭」，
@@ -2818,7 +2820,7 @@ def('D02','订单详情', '订单中心', ()=>{
     acts.push(`<button class="btn btn-default" onclick="goD05('${o.no}','D02')">${I.bell}缺货预告</button>`);
     /* 发货单在订单确认 / 中标生成那一刻已由系统自动创建，这里只有「查看 / 维护」，没有创建入口 */
     acts.push(`<button class="btn btn-primary" onclick="orderShipOpen('${o.no}')">${I.doc}查看发货单</button>`);
-    /* 门店已申请撤回（仍处已确认）：右上角给出「同意撤回」入口，处理后退回待确认并作废原发货单 */
+    /* 门店已申请撤回（仍处已确认）：右上角给出「同意撤回」入口，处理后退回待确认并关闭原发货单 */
     if(isWithdrawReq(o)) acts.push(`<button class="btn btn-default" style="border-color:var(--warning);color:var(--warning)" onclick="ordWithdrawAgree('${o.no}')">${I.back}同意撤回</button>`);
   } else if(['SHIPPED','ACCEPTING','COMPLETED'].indexOf(st)>=0){
     /* 货已发出 / 订单已完成：只保留只读「查看发货单」；一单一发，关联单由 shipAudit() 保证一定存在 */
@@ -2856,7 +2858,7 @@ def('D02','订单详情', '订单中心', ()=>{
       if(e.type==='req')
         tl.push([e.at, '<b>门店申请撤回</b> · 申请中（待供应商同意）','warn', e.by||o.store]);
       else if(e.type==='agree')
-        tl.push([e.at, '<b>供应商同意撤回</b> · 退回待确认，原发货单 '+e.sh+' 作废','warn', CUR_ACCOUNT.name]);
+        tl.push([e.at, '<b>供应商同意撤回</b> · 退回待确认，原发货单 '+e.sh+' 已关闭','warn', CUR_ACCOUNT.name]);
       else if(e.type==='reconfirm')
         tl.push([e.at, '<b>重新确认接单</b> · 再次进入已确认，系统生成新发货单 '+e.sh,'done', CUR_ACCOUNT.name]);
     });
@@ -3222,16 +3224,17 @@ function presSubmit(){
 const CUR_ACCOUNT = {name:'李敏', phone:'138****6621'};
 
 /* 发货单一期数据层：系统自动生成（待发货，可反复编辑）→ 确认发货（锁定 + 生成送货单 → 已发货）
-   → 门店提交第一次验收数据（进入验收中，acceptingAt）→ 食堂验收完成、结论回写
+   → 门店提交第一次验收数据（订单进入验收中，acceptingAt；发货单仍为已发货）→ 食堂验收完成、结论回写
    （生成验收单，订单 / 发货单联动进入已完成，acceptedAt）。
    发货与验收是两段：确认发货那一刻不产生验收单，「已发货 · 待门店验收」是正常中间态；
-   门店一旦提交第一次验收数据就进入「验收中」，验收结论回写才进入「已完成」—— 两个节点都记真实时间。
+   门店一旦提交第一次验收数据就进入「验收中」（仅采购订单状态），发货单仍保持「已发货」；
+   验收结论回写后两张单才同时进入「已完成」—— 两个节点都记真实时间。
    一期只有这一个可编辑态，不设「草稿」；保存只留痕、不改状态、不推进订单。
    一个订单只发一次：订单确认 / 中标生成那一刻自动建唯一一张单，供应端没有人工建单入口；
    后续补发另走一张「补发订单」，不在这张单上追加批次、不拆分、不二次确认发货。 */
 const SHIPMENTS = [
   {no:'SH-20261026-0041', order:'PO-20261026-0081', store:'徐汇滨江店', stall:'快餐档',   date:'2026-10-27', st:'WAIT', amt:0, diff:0, shipper:'李敏', phone:'138****6621', createdAt:'2026-10-26 20:35', savedAt:'2026-10-26 20:50', dispatchedAt:'', note:'', lines:null, savedLines:null},
-  /* 验收中演示单对应发货单：已发货锁定、门店已提交首次验收数据（acceptingAt），结论未回写故无 acceptedAt、不挂验收单 */
+  /* 验收中订单演示单对应发货单：发货单仍为「已发货」（锁定），门店已提交首次验收数据（acceptingAt，订单进入验收中），结论未回写故无 acceptedAt、不挂验收单 */
   {no:'SH-20261026-0045', order:'PO-20261026-0082', store:'虹桥天地店', stall:'小炒档',   date:'2026-10-27', st:'SHIPPED', amt:1440.50, diff:0, shipper:'王强', phone:'138****6621', createdAt:'2026-10-26 20:42', savedAt:'', dispatchedAt:'2026-10-26 21:08', acceptingAt:'2026-10-27 07:00', acceptingBy:'赵磊', note:'', lines:null, savedLines:null},
   {no:'SH-20261026-0040', order:'PO-20261026-0079', store:'静安嘉里店', stall:'快餐档', date:'2026-10-26', st:'COMPLETED', amt:3223.60, diff:0, shipper:'李敏', phone:'138****6621', createdAt:'2026-10-26 20:40', savedAt:'', dispatchedAt:'2026-10-26 21:02', acceptingAt:'2026-10-27 07:30', acceptedAt:'2026-10-27 08:05', note:'', lines:null, savedLines:null},
   {no:'SH-20261026-0039', order:'PO-20261026-0077', store:'静安嘉里店', stall:'面点档',   date:'2026-10-26', st:'COMPLETED', amt:1957.90, diff:0, shipper:'李敏', phone:'138****6621', createdAt:'2026-10-26 20:25', savedAt:'', dispatchedAt:'2026-10-26 20:51', note:'', acceptingAt:'2026-10-27 07:35', acceptedAt:'2026-10-27 08:10', lines:null, savedLines:null},
@@ -3280,6 +3283,12 @@ const DELIVERY_NOTES = [
 ];
 function dnOf(sh){ return DELIVERY_NOTES.find(d=>d.ship===sh.no) || null; }
 function shipLocked(sh){ return ['SHIPPED','COMPLETED','CLOSED'].indexOf(sh.st)>=0; }
+/* 食安报告补传只读口径：订单或发货单任一为「已关闭」时整列只读，不提供补传入口，写入层同样拦截。 */
+function shipRptReadonly(sh){
+  if(!sh) return true;
+  const o = ORDERS.find(x=>x.no===sh.order);
+  return sh.st==='CLOSED' || !!(o && o.st==='CLOSED');
+}
 function shipOf(no){ return SHIPMENTS.find(x=>x.order===no && !x.del) || null; }
 function nowStamp(){ const d=new Date(), p=x=>String(x).padStart(2,'0');
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
@@ -3464,16 +3473,16 @@ function shipAudit(){
     if(s.res==='全部合格' && (s.diff!==0 || Math.abs(s.amt-s.shipAmt)>0.001))
       bad.push('验收单 '+a.no+' 标记全部合格却有 '+s.diff+' 行差异 / 结算金额 ≠ 发货金额');
   });
-  /* 验收环节不变量：门店提交第一次验收数据 → 进入验收中 → 验收完成 → 进入已完成。
+  /* 验收环节不变量：门店提交第一次验收数据（订单进入验收中，发货单仍为已发货）→ 验收完成 → 两张单进入已完成。
      已完成发货单必须留齐 acceptingAt / acceptedAt，且时间顺序不得倒流。 */
   SHIPMENTS.forEach(sh=>{
     if(sh.st!=='COMPLETED') return;
-    if(!sh.acceptingAt) bad.push(sh.no+' 已完成但缺「进入验收中」时间 acceptingAt');
+    if(!sh.acceptingAt) bad.push(sh.no+' 已完成但缺「门店首次提交验收数据」时间 acceptingAt');
     if(!sh.acceptedAt)  bad.push(sh.no+' 已完成但缺「进入已完成」时间 acceptedAt');
     if(sh.dispatchedAt && sh.acceptingAt && sh.dispatchedAt > sh.acceptingAt)
-      bad.push(sh.no+' 进入验收中时间早于确认发货时间');
+      bad.push(sh.no+' 门店首次提交验收数据时间早于确认发货时间');
     if(sh.acceptingAt && sh.acceptedAt && sh.acceptingAt > sh.acceptedAt)
-      bad.push(sh.no+' 进入验收中时间晚于验收完成时间');
+      bad.push(sh.no+' 门店首次提交验收数据时间晚于验收完成时间');
   });
   /* 展示金额不变量：发货单 / 送货单金额必须等于各自商品行合计，行数必须等于商品行数。
      防止源码里再写死一个与明细不符的初始值（例如旧版 2005.30 与真实 1997.10）。 */
@@ -3933,7 +3942,7 @@ function shipDispatchFrom(no){
 
 /* ---------- E01 发货管理（功能页名；模块名仍为「发货与分拣」） ---------- */
 def('E01','发货管理','发货与分拣', ()=>{
-  const rows = SHIPMENTS.filter(o=>!o.del).map(o=>{
+  const rows = SHIPMENTS.filter(o=>!o.del || o.st==='CLOSED').map(o=>{
     const st = SHIP_ST[o.st] || ['待发货','wait'];
     const ready = shipPrepared(o);
     const ops = shipLocked(o)
@@ -3958,9 +3967,9 @@ def('E01','发货管理','发货与分拣', ()=>{
     </tr>`;
   }).join('');
   const waitN = shipWaitCount();
-  const shipTotal = SHIPMENTS.filter(o=>!o.del).length;
+  const shipTotal = SHIPMENTS.filter(o=>!o.del || o.st==='CLOSED').length;
   return pagehd('发货管理',
-      `全部由系统在<b>订单确认 / 中标生成</b>时自动创建，实发量已按下单量预填，一个订单只发一次`,
+      `全部由系统在<b>订单确认 / 中标生成</b>时自动创建，实发量已按下单量预填，一个订单只发一次，详情查看发货信息，核对后确认发货`,
       `<button class="btn btn-default" onclick="toast('已导出')">${I.down}导出</button>`) +
   `` +
   `
@@ -3975,7 +3984,6 @@ def('E01','发货管理','发货与分拣', ()=>{
       <input class="input" style="width:196px" placeholder="发货单号 / 订单号">
       <button class="btn btn-primary sm" onclick="toast('已按条件查询')">查询</button>
       <button class="btn btn-default sm" onclick="toast('已重置')">重置</button>
-      <span class="hint" style="margin-left:auto">点「查看」进发货单详情，核对后即可确认发货</span>
     </div>
     <div class="tbl-wrap"><table class="tbl">
       <thead><tr>
@@ -4036,11 +4044,6 @@ def('E02','发货单编辑','发货与分拣', ()=>{
      报告仍是「报告库资产 + 引用关系」，不写进 sh.lines / savedLines，不影响冻结快照。 */
   const fromOrder = CUR_SHIP_FROM==='order';
   const blank = !shipPrepared(sh);
-  const banner = locked
-    ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">该发货单已于 ${sh.dispatchedAt} 确认发货并锁定，以下数据仅供查看。</div>`
-    : (fromOrder
-        ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">本页用于<b>维护这张由系统自动生成的关联发货单</b>，商品行与订单行一一对应；<b>实发量已按下单量（足量）预填</b>，请按实际出库量核对修改。保存只留痕、不改状态；<b>数量按包装单位整件计数，未填 / 为 0 / 带小数且未勾「本行不发」的行不允许保存</b>。<b>确认发货请在「发货单详情」中进行</b>。</div>`
-        : `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">本单由系统在<b>订单确认 / 中标生成</b>时自动创建，商品行取自 ${sh.order}，<b>实发量已按下单量（足量）预填</b>${blank?'，<b>待核对保存</b>':''}；当前为「待发货」，<b>发货日期来自订单、全程只读</b>，其余确认发货前均可修改。<b>数量按包装单位整件计数，未填 / 为 0 / 带小数的行不允许保存</b>。点「保存并查看发货单」进同一张单的详情核对。</div>`);
   const headActs = locked ? `<button class="btn btn-default" onclick="go('E04')">${I.doc}查看发货单</button>`
     : (fromOrder
         ? `<button class="btn btn-default" onclick="go('E04')">${I.back}返回详情</button>`
@@ -4049,7 +4052,6 @@ def('E02','发货单编辑','发货与分拣', ()=>{
       `${sh.order} · ${sh.store} · ${sh.stall} · ${ls.length} 行 · 实发量已按下单量（足量）预填${blank?' · 待核对保存':''}`, headActs,
       tag(stInfo[0], stInfo[1])) +
   `<div id="s-err" style="display:none;margin-bottom:12px"></div>` +
-  banner +
   `
 
   <div class="card pad0">
@@ -4365,10 +4367,10 @@ def('F02','验收详情','验收与售后', ()=>{
       tag(ys.res, ys.cls)) +
   banner + `
   <div class="stats" style="grid-template-columns:repeat(4,1fr)">
-    <div class="stat"><div class="lab">订单应收金额</div><div class="val">${money(S.orderAmt)}</div><div class="foot">按 ${S.rows.length} 行下单量计算</div></div>
-    <div class="stat"><div class="lab">发货金额</div><div class="val">${money(S.shipAmt)}</div><div class="foot">按实发量计算（发货单已锁定）</div></div>
-    <div class="stat hi"><div class="lab">合格结算金额</div><div class="val">${money(S.amt)}</div><div class="foot">本单最终成交金额 · Σ 合格量 × 单价</div></div>
-    <div class="stat warn"><div class="lab">拒收 + 短装损失</div><div class="val">${money(S.rejAmt + S.shortAmt)}</div><div class="foot">拒收 ${money(S.rejAmt)} · 短装 ${money(S.shortAmt)}</div></div>
+    <div class="stat"><div class="lab">订单应收金额</div><div class="val">${money(S.orderAmt)}</div></div>
+    <div class="stat"><div class="lab">发货金额</div><div class="val">${money(S.shipAmt)}</div></div>
+    <div class="stat hi"><div class="lab">合格结算金额</div><div class="val">${money(S.amt)}</div></div>
+    <div class="stat warn"><div class="lab">拒收损失</div><div class="val">${money(S.rejAmt)}</div></div>
   </div>
 
   <div class="card pad0">
@@ -8261,10 +8263,11 @@ def('C06','报价单详情','询价与报价', ()=>{
     const sh = curShip();
     const stInfo = SHIP_ST[sh.st] || ['待发货','wait'];
     const locked = shipLocked(sh);
+    const rptReadonly = shipRptReadonly(sh);
     const ready = shipPrepared(sh);
     const dn = dnOf(sh);
     const ys = ysOf(sh);                    /* 有无验收单由「门店是否回写」决定，不由 locked 决定 */
-    const accepting = sh.st==='SHIPPED' && !!sh.acceptingAt && !ys;  /* 门店已提交首次验收数据、结论未回写 = 验收中 */
+    const accepting = sh.st==='SHIPPED' && !!sh.acceptingAt && !ys;  /* 门店已提交首次验收数据、结论未回写：采购订单进入验收中，发货单仍为已发货 */
     const awaitingAccept = sh.st==='SHIPPED' && !ys && !accepting;   /* 已发货 · 门店尚未验收：合法中间态（已关闭单不落此态） */
     const lines = shipDetailLines(sh);
     const amt = shipLineAmt(lines);
@@ -8290,11 +8293,13 @@ def('C06','报价单详情','询价与报价', ()=>{
             return `<span class="rpt-chip${cls}${r.del?' void':''}" title="${tip}">${r.name||'—'}${lk.scene==='auto'?'<span class="hint" style="font-size:10.5px;margin-left:4px">自动</span>':''}</span>`;
           }).join('')
         : '<span class="hint">未关联</span>';
-      const op = !locked
-        ? (canLink ? '<span class="hint">待发货只读</span>'
-                   : '<span class="hint">本行不发 · 待发货只读</span>')
-        : (!canLink ? '<span class="hint">本行不发 · 无需补传</span>'
-        : `<span class="link" onclick="reportPickOpen('${sh.no}',${l.i},'E04')">＋ 补传报告</span>`);
+      const op = rptReadonly
+        ? '<span class="hint">已关闭 · 报告只读</span>'
+        : (!locked
+            ? (canLink ? '<span class="hint">待发货只读</span>'
+                       : '<span class="hint">本行不发 · 待发货只读</span>')
+            : (!canLink ? '<span class="hint">本行不发 · 无需补传</span>'
+            : `<span class="link" onclick="reportPickOpen('${sh.no}',${l.i},'E04')">＋ 补传报告</span>`));
       return `<div class="rpt-cell">${chips}</div><div class="rpt-op">${op}</div>`;
     };
     const rowsHtml = lines.map(l=>`
@@ -8313,8 +8318,8 @@ def('C06','报价单详情','询价与报价', ()=>{
       </tr>`).join('');
     /* 流转记录 = 状态变更的真实时间点，不再用「现在」占位。
        待发货：建单那一刻进入（createdAt）；已发货：确认发货（dispatchedAt）；
-       验收中：门店提交第一次验收数据（acceptingAt）；已完成：食堂验收完成（acceptedAt）；
-       已关闭：关闭（closedAt）。末条即当前状态且带真实时间。 */
+       门店提交第一次验收数据（acceptingAt）：仅采购订单进入验收中，发货单仍为已发货，本页记动作节点；
+       已完成：食堂验收完成（acceptedAt）；已关闭：关闭（closedAt）。末条即当前状态且带真实时间。 */
     /* 操作人：人工动作标注账号 / 验收人；系统动作（自动建单、生成送货单、自动关闭）留空不标 */
     const tl = [[sh.createdAt||'—','<b>系统自动生成发货单</b> · 进入待发货','done']];
     if(sh.savedAt) tl.push([sh.savedAt,'<b>保存修改</b>','done', sh.shipper||CUR_ACCOUNT.name]);
@@ -8322,8 +8327,8 @@ def('C06','报价单详情','询价与报价', ()=>{
       tl.push([sh.dispatchedAt,'<b>确认发货</b> · 进入已发货','done', sh.shipper||CUR_ACCOUNT.name]);
       tl.push([dn?dn.generatedAt:sh.dispatchedAt,'<b>生成送货单</b>','done']);  /* 系统按冻结内容生成 */
       if(sh.acceptingAt || sh.st==='COMPLETED'){
-        /* 验收中：门店已提交首次验收数据，尚无验收单，操作人取 acceptingBy；完成后取验收单 by */
-        tl.push([sh.acceptingAt||sh.acceptedAt||sh.dispatchedAt,'<b>食堂验收</b> · 进入验收中','done', (ys&&ys.by)||sh.acceptingBy||'']);
+        /* 门店首次提交验收数据：采购订单进入验收中，发货单仍为已发货；操作人取 acceptingBy，完成后取验收单 by */
+        tl.push([sh.acceptingAt||sh.acceptedAt||sh.dispatchedAt,'<b>门店提交首次验收数据</b>','done', (ys&&ys.by)||sh.acceptingBy||'']);
       }
       if(sh.st==='COMPLETED'){
         tl.push([sh.acceptedAt||sh.dispatchedAt,'<b>食堂验收完成</b> · 进入已完成','done', (ys&&ys.by)||'']);
@@ -8353,7 +8358,7 @@ def('C06','报价单详情','询价与报价', ()=>{
       ? (ys
           ? `<button class="btn btn-primary" onclick="ysOpenFromShip()">看验收结果</button>`
           : (accepting
-              ? `<button class="btn btn-default" onclick="toast('门店于 ${sh.acceptingAt} 已提交首次验收数据，验收结论尚未回写；结论回写后生成验收单，订单同步进入已完成')">验收中 · 待结论</button>`
+              ? `<button class="btn btn-default" onclick="toast('门店于 ${sh.acceptingAt} 已提交首次验收数据，采购订单进入验收中、发货单仍为已发货；结论回写后生成验收单，两张单同步进入已完成')">已发货 · 待结论</button>`
               : (awaitingAccept
                   ? `<button class="btn btn-default" onclick="toast('门店尚未验收：验收信息与结论由门店侧验收后回写供应端，届时才会生成验收单')">等待门店验收</button>`
                   : '')))
@@ -8363,31 +8368,19 @@ def('C06','报价单详情','询价与报价', ()=>{
     const printBtn = dn
       ? `<button class="btn btn-default" onclick="goK05('E04')">${I.print}送货单</button>`
       : `<button class="btn btn-default" onclick="toast('确认发货后才会生成送货单')">${I.print}送货单（未生成）</button>`;
-    const banner = locked
-      ? (accepting
-          ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2);line-height:1.7">该发货单已于 <b class="mono">${sh.dispatchedAt}</b> 确认发货，门店于 <b class="mono">${sh.acceptingAt}</b> 提交首次验收数据，订单已进入「验收中」。<b>验收结论尚未回写，当前未关联验收单</b>；结论由门店验收后回写供应端，届时本页才会出现验收结果入口，订单与发货单同步联动进入「已完成」。</div>`
-          : (awaitingAccept
-              ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2);line-height:1.7">该发货单已于 <b class="mono">${sh.dispatchedAt}</b> 确认发货，订单已推进为「已发货」。<b>门店侧尚未验收，当前未关联任何验收单</b>；验收信息与验收结论由门店验收后回写供应端，届时本页才会出现验收结果入口，订单与发货单同步联动进入「已完成」。</div>`
-              : ''))
-      : (!ready
-          ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">这张发货单由系统在<b>订单确认 / 中标生成</b>时自动创建，商品行取自关联订单、<b>实发量已按下单量（足量）预填</b>。请先点「修改发货信息」按实际出库量核对并保存，之后才能确认发货；一期一个订单只发一次。</div>`
-          : (CUR_SHIP_FROM==='order'
-            ? `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">本页用于<b>核对这张关联发货单</b>：逐行核对实发量、本行不发、备注与发货人 / 电话，<b>发货日期来自订单、全程只读</b>，其余确认发货前均可修改；保存只留痕、不改状态。<b>确认发货请点本页右上角「确认发货」</b>。</div>`
-            : `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">本页既是<b>发货单详情</b>，也是<b>发货前核对</b>：逐行核对实发量、本行不发、备注与发货人 / 电话，<b>发货日期来自订单、全程只读</b>，其余确认发货前均可修改；保存只留痕、不改状态。点「确认发货」后锁定并生成送货单。</div>`));
-    const headTag = accepting ? tag('验收中','proc') : tag(stInfo[0], stInfo[1]);
+    const headTag = tag(stInfo[0], stInfo[1]);   /* 发货单只有待发货 / 已发货 / 已完成 / 已关闭，验收中仅是采购订单状态 */
     return pagehd(sh.no,
         `${sh.order} · ${sh.store} · ${sh.stall} · ${lines.length} 行 · 实发 <b>${money(amt)}</b>${locked?'':(!ready?' · 待发货，下单量待核对保存':(CUR_SHIP_FROM==='order'?' · 待发货，本页可核对':' · 待发货，本页可核对并确认发货'))}`,
         `${backBtn}
          ${printBtn}
          ${mainBtns}`,
         headTag) +
-    banner +
     `
     <div class="stats" style="grid-template-columns:repeat(4,1fr)">
-      ${kpi('实发金额', money(amt).replace('¥',''), '元', ready?'按实发量 × 订单单价':'按下单量（足量）预填，待核对保存')}
-      ${kpi('发货行数', String(lines.length), '行', '与订单行一一对应')}
-      ${kpi('本行不发', String(offN), '行', '整行不供，实发量记 0')}
-      ${kpi('当前状态', accepting?'验收中':stInfo[0], '', locked?(accepting?'门店已提交首次验收数据 · 结论未回写':(awaitingAccept?'已发货 · 等待门店验收':'验收结果已回写，只读')):'发货前可修改', '')}
+      ${kpi('实发金额', money(amt).replace('¥',''), '元', '')}
+      ${kpi('发货行数', String(lines.length), '行', '')}
+      ${kpi('本行不发', String(offN), '行', '')}
+      ${kpi('当前状态', stInfo[0], '', '')}
     </div>
 
   <div class="grid-2-1" style="margin-top:12px">
@@ -8403,6 +8396,7 @@ def('C06','报价单详情','询价与报价', ()=>{
           <div><dt>建单方式</dt><dd>系统自动生成 · 一个订单只发一次</dd></div>
           <div><dt>创建时间</dt><dd class="mono">${sh.createdAt||'—'}</dd></div>
           <div><dt>确认发货时间</dt><dd class="mono">${sh.dispatchedAt||'—'}</dd></div>
+          <div style="grid-column:1/-1"><dt>整单备注</dt><dd style="line-height:1.7">${SHIP_META.note ? SHIP_META.note : '<span class="hint">无整单备注</span>'}</dd></div>
         </div>
       </div>
 
@@ -8426,10 +8420,6 @@ def('C06','报价单详情','询价与报价', ()=>{
         <div class="card-hd" style="padding:0 0 14px;border-bottom:none"><h3>流转记录 <span class="sub">${stInfo[0]}</span></h3></div>
         <div class="timeline">${timeline}</div>
       </div>
-      <div class="card" style="margin-top:12px">
-        <div class="card-hd" style="padding:0 0 14px;border-bottom:none"><h3>整单备注</h3></div>
-        <div style="font-size:13px;color:var(--text-2);line-height:1.7">${SHIP_META.note ? SHIP_META.note : '<span class="hint">无整单备注</span>'}</div>
-      </div>
     </div>
   </div>
 
@@ -8439,16 +8429,18 @@ def('C06','报价单详情','询价与报价', ()=>{
   <div class="card pad0" style="margin-top:12px">
     <div class="card-hd">
       <h3>发货明细 <span class="sub">${lines.length} 行</span></h3>
-      <span class="hint">${locked
-        ? '最右列可<b style="color:var(--text-2)">补传食安报告</b>（默认带出该商品上次关联）· 已发货：只追加、不替换'
-        : `待发货：本页食安报告<b style="color:var(--text-2)">只读</b> · 已按<b style="color:var(--text-2)">有效期自动关联 ${autoTotal} 份</b>`}</span>
+      <span class="hint">${rptReadonly
+        ? '订单 / 发货单已关闭：<b style="color:var(--text-2)">食安报告只读</b>，不提供补传'
+        : (locked
+          ? '最右列可<b style="color:var(--text-2)">补传食安报告</b>（默认带出该商品上次关联）· 已发货：只追加、不替换'
+          : `待发货：本页食安报告<b style="color:var(--text-2)">只读</b> · 已按<b style="color:var(--text-2)">有效期自动关联 ${autoTotal} 份</b>`)}</span>
     </div>
     <div class="tbl-wrap"><table class="tbl" style="min-width:1030px">
       <thead><tr>
         <th class="c">行号</th><th>品名 / 规格</th><th class="c">单位</th><th class="r">下单量</th>
         <th class="r">预估备货量</th><th class="r">实发量</th><th class="r">单价</th><th class="r">订单金额</th>
         <th class="c">本行不发</th><th>备注</th>
-        <th>食安报告 <span class="hint" style="font-weight:400">（${locked?'补传 · 只追加':'只读'}）</span></th>
+        <th>食安报告 <span class="hint" style="font-weight:400">（${rptReadonly?'只读':(locked?'补传 · 只追加':'只读')}）</span></th>
       </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table></div>
@@ -8660,6 +8652,7 @@ function reportLink(shNo, i, ids, scene){
    因此能绕开 shipSave() 对锁定单的无条件拦截。 */
 function shipReportPatch(shNo, i, ids){
   const sh = SHIPMENTS.find(x=>x.no===shNo);
+  if(shipRptReadonly(sh)){ toast('已关闭订单 / 发货单的食安报告只读，不能补传','err'); return []; }
   if(!sh || !shipLocked(sh)){ toast('该发货单未锁定，请用发货前关联','err'); return []; }
   return reportLink(shNo, i, ids, 'after');
 }
@@ -8723,6 +8716,9 @@ function reportPickOpen(shNo, i, back){
   const sh = SHIPMENTS.find(x=>x.no===shNo); if(!sh) return;
   /* E04 是「发货单详情」：待发货态报告只读，发货前的关联 / 上传统一在 E02 明细行内。
      这里加一道防御，避免深链、残留状态或控制台调用绕过 UI 直接写入。 */
+  if((back||CUR)==='E04' && shipRptReadonly(sh)){
+    toast('已关闭订单 / 发货单的食安报告只读，不能补传','err'); return;
+  }
   if((back||CUR)==='E04' && !shipLocked(sh)){
     toast('待发货单的报告请在「发货单编辑」E02 明细行内关联','err'); return;
   }
@@ -8882,6 +8878,9 @@ function reportPickConfirm(){
   const p = RPT_PICK; if(!p) return;
   /* 与 reportPickOpen 同源的二次校验：E04 来源必须是已发货锁定单，否则不允许写入。 */
   const _sh = SHIPMENTS.find(x=>x.no===p.sh);
+  if(p.back==='E04' && shipRptReadonly(_sh)){
+    toast('已关闭订单 / 发货单的食安报告只读，不能补传','err'); return;
+  }
   if(p.back==='E04' && (!_sh || !shipLocked(_sh))){
     toast('待发货单的报告请在「发货单编辑」E02 明细行内关联','err'); return;
   }
@@ -9060,7 +9059,7 @@ def('E11','食安报告库','发货与分拣', ()=>{
         ${pgFoot('E11', pg)}
       </div></div>`;
   /* 页头保留自动注入的「规则说明」；底部独立「报告库规则」卡片已移除，规则统一走该弹层。 */
-  return pagehd('食安报告库', '', '') + listCard;
+  return pagehd('食安报告库', '查询食安报告、有效期及发货引用记录', '') + listCard;
 });
 
 /* ============================================================
@@ -11780,7 +11779,7 @@ const SDESC = {
   D05:'提前告知供不上，不改变订单数量与金额',
   E01:'发货管理：系统自动建单，填写 / 核对 / 确认发货；配送时间 = 配送日期 + 选填送达时间',
   E02:'按实发量落数；发货明细行内的食安报告按有效期自动关联（无需确认）；发货日期由采购订单带入、全程只读，只补选填的当日送达时间（时分），其余字段确认发货前可改，一期不做阈值判定',
-  E04:'发货单详情：待发货可核对并确认发货（食安报告只读，已按有效期自动关联），确认发货后只读并显示送货单，仅此时可在发货明细行内补传食安报告',
+  E04:'发货单详情：待发货可核对并确认发货（食安报告只读，已按有效期自动关联），确认发货后只读并显示送货单，仅此时可在发货明细行内补传食安报告；订单 / 发货单已关闭时整列只读',
   E05:'〔二期〕装车批次是物理事实；一单一发，补发另走补发订单',
   E06:'〔二期〕按库位排序的拣货作业单',
   E07:'〔二期〕分拣单打印稿，不出现价格与门店',
@@ -11914,7 +11913,7 @@ def('K01','全局框架说明','全局', ()=>{
           <b>② 供不上货</b>：A02 → D05 → E02 → E04 → F01 → F02<br>
           <b>③ 一次结算</b>：F06 → G01 → G02 → G03 → G04
         </div>
-        <div class="hint" style="margin-top:10px">右下角「切换页面」可随时跳任意屏。</div>
+        <div class="hint" style="margin-top:10px">顶部「切换页面」可随时跳任意屏。</div>
       </div>
     </div>
   </div>`;
@@ -12117,7 +12116,7 @@ E01:[
   ["预填与核对","商品行取关联订单，实发量按<b>下单量（足量）</b>预填，非 0 / 空白；「本行不发」由供应商按实际勾选。预填为估算值：列表标「待核对」、金额标「预估」，<b>核对保存前不给确认发货</b>。"],
   ["可编辑范围","「待发货」为唯一可编辑态：实发量、本行不发、逐行备注、发货人 / 电话、送达时间、整单备注均可改；<b>发货日期由采购订单带入、全程只读</b>。「保存」仅留痕不改状态，仅「确认发货」锁定。列表对已核对保存的单提供「填写 / 确认发货」直达操作。"],
   ["配送时间口径","本列由发货单<b>配送日期</b>（订单带入、不可改）与 E02 选填的<b>送达时间（时分）</b>拼接，如 <b>2026-10-26 7:00</b>；未填仅显示日期。<b>筛选按配送日期</b>，时刻仅展示、非检索维度；订单侧 D01 / D02 保持「配送日期」。"],
-  ["关闭与作废","订单过配送日期未发货由系统自动置「已关闭」时，对应待发货单同步作废为「已关闭」，不留孤儿单。<b>一单只发一次</b>：短装按实发结算，补发另开订单，不在原单加批次、拆分或二次确认发货。"],
+  ["关闭口径","订单过配送日期未发货，或门店直采已确认后申请撤回且供应商同意，相关发货单都同步置「已关闭」并保留在列表中可追溯；撤回退回待确认后门店再次确认，系统会生成全新一张发货单，旧关闭单不参与当前有效单匹配。<b>一单只发一次</b>：短装按实发结算，补发另开订单，不在原单加批次、拆分或二次确认发货。"],
   ["确认发货动作","① 冻结全部实发量与备注；② 关联订单由「已确认」推进为<b>「已发货」</b>，门店端转「待验收」；③ 按冻结内容<b>生成送货单</b>（随货同行联），可在详情查看与打印。"],
   ["二期范围","分拣、批次、装车与批量打印为演示工具页，<b>不进一期主链</b>：分拣实拣量不回写发货单，批次与装车时间不由确认发货生成。一期闭环为「录入 → 确认发货 → 送货单」。"],
 ],
@@ -12136,7 +12135,7 @@ E02:[
 ],
 
 E04:[
-  ["食安报告状态","与 E02 同一明细表、同一最右列，标签颜色：<b>蓝色 = 有效期自动关联</b>、<b>橙色 = 已发货后补传</b>、绿色 = 发货前人工关联。<b>待发货态本页报告只读</b>：系统已按 <b>pid</b> 与发货日期有效期自动关联，不提供关联 / 上传入口，补充统一在 <b>E02 发货明细行内</b>完成；流转记录增「系统自动关联食安报告 · N 份」。确认发货后才在 E04 行内出现「＋ 补传报告」，可搜索或新增上传。已发货<b>只追加、不替换</b>，已关联项只读、不显示解绑；补传走独立写入口，不改数量 / 金额 / 时间 / 状态 / 送货单，仅流转记录增「补传食安报告 · N 份」。不单列右栏报告卡片。"],
+  ["食安报告状态","与 E02 同一明细表、同一最右列，标签颜色：<b>蓝色 = 有效期自动关联</b>、<b>橙色 = 已发货后补传</b>、绿色 = 发货前人工关联。<b>待发货态本页报告只读</b>：系统已按 <b>pid</b> 与发货日期有效期自动关联，不提供关联 / 上传入口，补充统一在 <b>E02 发货明细行内</b>完成；流转记录增「系统自动关联食安报告 · N 份」。确认发货后才在 E04 行内出现「＋ 补传报告」，可搜索或新增上传。已发货<b>只追加、不替换</b>，已关联项只读、不显示解绑；补传走独立写入口，不改数量 / 金额 / 时间 / 状态 / 送货单，仅流转记录增「补传食安报告 · N 份」。<b>订单 / 发货单已关闭时整列只读，不提供补传入口</b>，写入层同步拦截。不单列右栏报告卡片。"],
   ["数据来源","发货单号、关联订单、门店、配送时间（配送日期 + 选填送达时间）、发货人 / 电话、<b>建单方式（系统自动生成）</b>、创建与确认发货时间、逐行实发量与备注，均取自发货物单，非写死样例。<b>发货前显示当前可改内容，确认后显示锁定快照</b>；流转记录首条为「系统自动生成发货单」并带出最近保存时间。从 E01 或 D02 进入显示各自单据。"],
   ["核对前不给确认发货","明细显示关联订单商品行与预填下单量；<b>未核对保存前本页仅提供「修改发货信息」</b>，不提供「确认发货」、不生成送货单。按实际出库核对保存后才出现确认发货按钮。"],
   ["确认后只读","数量、备注、时间在确认发货时锁定，之后只读；本屏不提供线上更正 / 重开入口，更正走线下运营。逐行备注原文打印在送货单上。"],
@@ -12146,8 +12145,8 @@ E04:[
   ["按钮语义","<b>修改发货信息</b>：回 E02 同一张单继续改（保留进入来源），状态仍「待发货」；<b>确认发货</b>：冻结数据、生成送货单、订单推进「已发货」，之后只读。此时发货单<b>未关联验收单</b>：验收由门店完成、结论回写后生成验收单并推进订单 / 发货单至「已完成」，故「已发货」阶段显示「等待门店验收」，不提供「看验收结果」。E02 输入框此时全部锁定，同单不重复生成送货单。"],
   ["发货与验收分离","确认发货仅做三件事：冻结实发量、生成送货单、订单推进「已发货」，<b>不创建或关联验收单</b>。「已发货 · 待门店验收」为正常中间态；门店验收结论回写后才新增验收单并推进至「已完成」，本页才出现「看验收结果」。判断依据为<b>发货单是否有关联验收单（ysOf）</b>，不是「是否确认过发货（shipLocked）」——后者在刚发货时即为真。"],
   ["返回逻辑","从 E01 列表进入显示<b>「返回列表」</b>，回发货管理清单；从 D02 进入显示<b>「返回详情」</b>，回<b>发货单详情（E04）</b>。E02 的「保存并返回」与右上角「返回详情」均回同一张发货单详情，不回采购订单详情。按钮仅做返回、不改数据，各状态常驻。"],
-  ["流转时间口径","各状态取真实变更时间：<b>待发货</b>=建单时间（createdAt）、<b>已发货</b>=确认发货时间（dispatchedAt）、<b>验收中</b>=首次提交验收数据（acceptingAt）、<b>已完成</b>=验收完成（acceptedAt）、<b>已关闭</b>=关闭时间（closedAt）。末条为当前状态且带真实时间，与页头标签、KPI 一致；节点仅留动作名（或状态名）与时间，不挂补充说明。"],
-  ["验收中环节不可省","门店<b>首次提交验收数据</b>进入「验收中」（acceptingAt），结论回写进入「已完成」（acceptedAt），为两段独立状态变更。已完成发货单须依次有<b>确认发货 → 生成送货单 → 进入验收中 → 进入已完成</b>。依据发货单自身状态与时间字段，<b>不依赖验收单对象是否存在</b>；无验收明细的历史单也展示完整流转（只是无「看验收结果」入口）。D02 与 E04 各自记录本单据状态变更时间，两套时间一致体现同一链路。"],
+  ["流转时间口径","各状态取真实变更时间：<b>待发货</b>=建单时间（createdAt）、<b>已发货</b>=确认发货时间（dispatchedAt）、<b>已完成</b>=验收完成（acceptedAt）、<b>已关闭</b>=关闭时间（closedAt）。<b>验收中仅属采购订单</b>，门店首次提交验收数据（acceptingAt）在发货单流转里只记动作、不改发货单状态（仍为已发货）。末条即当前状态且带真实时间，与页头标签、KPI 一致。"],
+  ["发货单状态口径","发货单只有<b>待发货 / 已发货 / 已完成 / 已关闭</b>，不存在「发货单验收中」。门店首次提交验收数据时订单进入验收中、发货单保持已发货；结论回写后两张单同步进入已完成。已完成发货单流转依次为<b>确认发货 → 生成送货单 → 门店提交首次验收数据 → 进入已完成</b>，依据发货单自身状态与时间字段，不依赖验收单对象是否存在；无验收明细的历史单也展示完整流转。"],
 ],
 
 E05:[
@@ -12192,7 +12191,7 @@ E11:[
   ["匹配规则","订单行与发货行投影平台主数据 <b>pid / sid</b>，不以「品名+规格」文本作身份，改名或改包规不断链。报告与商品关系写在引用关系的 <b>pid</b> 上：按 pid 反查<b>该商品在其他历史发货单</b>关联过的报告，再筛有效期覆盖本单发货日期者。"],
   ["自动关联规则","按每张发货单的<b>发货日期 sh.date</b> 判定（非今天）；命中取上传时间<b>最新一份</b>写入引用（<b>scene=自动</b>、操作人「系统自动」、autoReason 记录命中的有效期），<b>无需确认</b>。每行最多一份、只追加不替换；该行已有引用或「本行不发 / 实发 0」不挂。自动关联<b>仅对待发货单</b>执行，已发货单不自动补（保持冻结快照与 E04 只读）。弹层上半区只读展示结果，下半区搜索 / 新增仅供补充，此两处需点「确认关联」。"],
   ["过期与作废处理","已过期 / 未生效 / 已作废的报告不参与自动关联，手动筛选也过滤。清单「有效 / 已过期」按<b>业务今天</b>展示，与「按单发货日期判定」不同。<b>历史引用不追改</b>：报告有效期后改或被作废，已发发货单仍显示当时关联的那份，台账可查。"],
-  ["已发货只追加","确认发货后商品行与送货单冻结，E04 补传走<b>独立写入口</b>绕开保存拦截：入口在<b>「发货明细」最右列</b>，仅追加新报告，已关联项只读、不可替换或解绑（无「×」）。补传不改数量、金额、时间、状态、验收与已生成送货单，仅流转记录增「补传食安报告 · N 份」。「本行不发 / 实发 0」无补传入口。<b>待发货态 E04 整列只读</b>，关联 / 上传仅在 E02；系统自动关联也<b>只对得发货单</b>执行。"],
+  ["已发货只追加","确认发货后商品行与送货单冻结，E04 补传走<b>独立写入口</b>绕开保存拦截：入口在<b>「发货明细」最右列</b>，仅追加新报告，已关联项只读、不可替换或解绑（无「×」）。补传不改数量、金额、时间、状态、验收与已生成送货单，仅流转记录增「补传食安报告 · N 份」。「本行不发 / 实发 0」无补传入口。<b>待发货态 E04 整列只读</b>，关联 / 上传仅在 E02；<b>已关闭订单 / 发货单同样整列只读</b>，不提供补传、写入层同步拦截。系统自动关联也<b>只对得发货单</b>执行。"],
   ["结算与打印隔离","报告为合规凭证，<b>不参与合格量、验收结论与结算金额</b>；未关联不提示、不阻塞确认发货、不产生待办。送货单在确认发货时生成后不再变化，故报告不打印其上；改在<b>报告详情</b>按报告反查引用记录（发货单 / 门店 / 商品 pid / 发货时间）。"],
 ],
 
