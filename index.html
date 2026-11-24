@@ -3222,6 +3222,13 @@ function presSubmit(){
 /* 当前登录账号：姓名与绑定手机取自账号资料（与 K03 个人中心、H02 账号管理同口径）。
    发货单的发货人 / 联系电话默认从这里带出，不再提供「联系人」预填下拉。 */
 const CUR_ACCOUNT = {name:'李敏', phone:'138****6621'};
+/* 联系电话展示口径：发货单编辑页（E02）与详情页（E04）显示完整号码，不做脱敏。
+   演示数据底层仍存掩码串（138****6621），仅在这两页展示时还原中间四位；
+   已是完整号码则原样返回。其他页面与数据来源不受影响。 */
+function unmaskPhone(v){
+  if(!v) return v;
+  return String(v).replace(/^(\d{3})\*{3,4}(\d{4})$/, '$10000$2');
+}
 
 /* 发货单一期数据层：系统自动生成（待发货，可反复编辑）→ 确认发货（锁定 + 生成送货单 → 已发货）
    → 门店提交第一次验收数据（订单进入验收中，acceptingAt；发货单仍为已发货）→ 食堂验收完成、结论回写
@@ -3638,7 +3645,7 @@ function e02Collect(){
   const sp=document.getElementById('e02-shipper'), ph=document.getElementById('e02-phone'), nt=document.getElementById('e02-note');
   const ar=document.getElementById('e02-arrival');
   if(sp) SHIP_META.shipper = sp.value.trim() || CUR_ACCOUNT.name;
-  if(ph) SHIP_META.phone   = ph.value.trim() || CUR_ACCOUNT.phone;
+  if(ph) SHIP_META.phone   = ph.value.trim();   /* 必填：留空不回退，由 shipSave 拦截 */
   if(nt) SHIP_META.note    = nt.value.trim();
   if(ar) SHIP_META.arrival = ar.value.trim();   /* 选填：留空就是没有送达时间 */
   shipEditLines().forEach(l=>{ const el=document.getElementById('snote-'+l.i); if(el) SHIP_META.notes[l.i]=el.value.trim(); });
@@ -3676,6 +3683,7 @@ function shipMarkErrors(bad){
 function shipClearErrors(){
   document.querySelectorAll('table.ship input.qty.bad').forEach(x=>x.classList.remove('bad'));
   document.querySelectorAll('table.ship tr.row-bad').forEach(x=>x.classList.remove('row-bad'));
+  const ph = document.getElementById('e02-phone'); if(ph) ph.classList.remove('err');
   const box = document.getElementById('s-err');
   if(box){ box.innerHTML=''; box.style.display='none'; }
 }
@@ -3700,6 +3708,19 @@ function shipSave(quiet, draft){
   e02Collect();
   const lines = shipDraftLines();
   if(!draft){
+    /* 联系电话必填：清空后不允许保存，输入框红框 + 顶部错误区提示 */
+    if(!SHIP_META.phone){
+      const ph = document.getElementById('e02-phone');
+      if(ph){ ph.classList.add('err'); ph.focus(); }
+      const box = document.getElementById('s-err');
+      if(box){
+        box.innerHTML = '<div class="banner err">' + I.warn +
+          '<div><div class="t">联系电话为必填项，暂不能保存</div>请填写发货人联系电话后再保存。</div></div>';
+        box.style.display = 'block';
+      }
+      toast('联系电话为必填项，请填写后再保存','err');
+      return false;
+    }
     const bad = shipInvalidLines(lines);
     if(bad.length){
       shipMarkErrors(bad);
@@ -4063,7 +4084,7 @@ def('E02','发货单编辑','发货与分拣', ()=>{
         <div class="field"><label>发货日期 <span style="font-weight:400;color:var(--text-4);font-size:11.5px">（来自采购订单 · 不可修改）</span></label><input class="input mono" id="e02-date" type="text" value="${sh.date}" readonly tabindex="-1" title="由采购订单 ${sh.order} 的配送日期自动带入，不可修改"></div>
         <div class="field"><label>送达时间 <span style="font-weight:400;color:var(--text-4);font-size:11.5px">（选填 · 只补当日时:分）</span></label><input class="input mono" id="e02-arrival" type="time" value="${SHIP_META.arrival}" ${dis}></div>
         <div class="field"><label><span class="req">*</span>发货人 <span style="font-weight:400;color:var(--text-4);font-size:11.5px">（当前账号）</span></label><input class="input" id="e02-shipper" value="${SHIP_META.shipper}" ${dis}></div>
-        <div class="field"><label>联系电话 <span style="font-weight:400;color:var(--text-4);font-size:11.5px">（账号绑定手机）</span></label><input class="input mono" id="e02-phone" value="${SHIP_META.phone}" ${dis}></div>
+        <div class="field"><label><span class="req">*</span>联系电话</label><input class="input mono" id="e02-phone" value="${unmaskPhone(SHIP_META.phone)}" oninput="this.classList.remove('err')" ${dis}></div>
       </div>
       <div class="field" style="margin-top:14px"><label>整单备注</label>
         <textarea class="input" id="e02-note" rows="2" ${dis} placeholder="仅整单性说明（如整体延后发出）。逐行的差异请写在下面的明细里">${SHIP_META.note}</textarea>
@@ -4096,6 +4117,7 @@ def('E02','发货单编辑','发货与分拣', ()=>{
 function afterRender(id){
   if(id === 'E02') shipPaint();
   if(id === 'D05') presCalc();   /* 按当前订单编辑态刷新已选行数 / 缺口 / 整单说明显隐 */
+  if(id === 'D12') acBatchModeSync();   /* 批量套用区默认人工确认：延迟分钟只读 0，下拉隐藏 */
 }
 
 /* E03「确认发货单」已并入 E04「发货单详情」：
@@ -6029,7 +6051,7 @@ def('B02','货品编辑','商品与价格', ()=>{
           ${lk('商品名称', g.pname)}
           ${lk('商品编码', `<span class="mono">${g.pid}</span>`)}
           ${lk('SKU 编码', `<span class="mono">${g.sid}</span>`)}
-          ${lk('商品形态', FORMTAG(g.form) + `<span style="margin-left:6px;color:var(--text-4);font-size:11.5px">${g.form==='毛菜'?'验收按实收':(g.form==='净菜'?'验收按实收':'验收按成品率')}</span>`)}
+          ${lk('商品形态', FORMTAG(g.form))}
           ${lk('商品分类', g.cat)}
           ${lk('品牌', g.brand)}
           ${lk('下发门店', g.store)}
@@ -7952,7 +7974,8 @@ def('C06','报价单详情','询价与报价', ()=>{
     instant: {t:'提交即自动确认',        cls:'done'},
     delay:   {t:'延迟 N 分钟自动确认',  cls:'proc'}
   };
-  const AC_DELAY_OPTIONS = [5,15,30];
+  const AC_DELAY_OPTIONS = [5,15,30];   /* 延迟下拉项固定，不加入 0 */
+  const AC_DELAY_NONE = 0;              /* 人工 / 提交即确认时的延迟分钟，只读展示，不进下拉 */
   const AC_DEFAULT = {mode:'manual', delay:15, notify:true};
   let AC_GLOBAL_ON = true;   /* 自动确认总开关：关闭后所有门店一律人工确认，各店配置保留 */
   let AC_BY_STORE = {
@@ -7972,16 +7995,25 @@ def('C06','报价单详情','询价与报价', ()=>{
     const e = document.getElementById('acm-'+id);
     return e ? e.value : acCfg(id).mode;
   }
-  /* 同一行内：延迟下拉、通知勾选是否可用，以及「当前生效」标签同步 */
+  /* 同一行内联动：接单方式切到「人工确认 / 提交即自动确认」→ 延迟分钟重置为 0（只读展示，不进下拉）；
+     切回「延迟 N 分钟自动确认」→ 下拉恢复默认 15 分钟。下拉项始终只有 5/15/30。 */
   function acRowSync(id){
     const m = acRowMode(id);
     const d = document.getElementById('acd-'+id);
+    const z = document.getElementById('acz-'+id);
     const n = document.getElementById('acn-'+id);
-    if(d) d.disabled = m!=='delay';
+    const isDelay = m==='delay';
+    if(d){
+      d.disabled = !isDelay;
+      d.style.display = isDelay ? '' : 'none';
+      if(isDelay && AC_DELAY_OPTIONS.indexOf(parseInt(d.value,10))<0) d.value = String(AC_DEFAULT.delay);
+      if(!isDelay) d.value = '';
+    }
+    if(z) z.style.display = isDelay ? 'none' : '';
     if(n) n.disabled = m==='manual';
     const s = document.getElementById('acs-'+id);
     if(s){
-      const x = acStatus({mode:m, delay:d?(parseInt(d.value,10)||AC_DEFAULT.delay):acCfg(id).delay});
+      const x = acStatus({mode:m, delay:isDelay?(d?(parseInt(d.value,10)||AC_DEFAULT.delay):AC_DEFAULT.delay):AC_DELAY_NONE});
       s.className = 'tag '+x.cls;
       s.textContent = x.t;
     }
@@ -7996,6 +8028,21 @@ def('C06','报价单详情','询价与报价', ()=>{
       : '未开启 · 全部门店暂按人工确认（各店配置保留）';
     if(tip) tip.style.display = opened ? 'none' : '';
   }
+  /* 批量套用区自身联动：选人工 / 提交即确认时延迟分钟重置为 0（只读展示，不进下拉）；
+     选延迟确认才显示 5/15/30 下拉，切回时给默认 15。 */
+  function acBatchModeSync(){
+    const m = document.getElementById('ac-batch-mode');
+    const d = document.getElementById('ac-batch-delay');
+    const z = document.getElementById('acz-batch');
+    const isDelay = m && m.value==='delay';
+    if(d){
+      d.disabled = !isDelay;
+      d.style.display = isDelay ? '' : 'none';
+      if(isDelay && AC_DELAY_OPTIONS.indexOf(parseInt(d.value,10))<0) d.value = String(AC_DEFAULT.delay);
+      if(!isDelay) d.value = '';
+    }
+    if(z) z.style.display = isDelay ? 'none' : '';
+  }
   /* 批量套用：只改本页编辑值，点「保存设置」后才落库；个别门店随后仍可单独改回 */
   function acBatchApply(){
     const m = document.getElementById('ac-batch-mode');
@@ -8005,8 +8052,11 @@ def('C06','报价单详情','询价与报价', ()=>{
       const sm = document.getElementById('acm-'+s.id);
       const sd = document.getElementById('acd-'+s.id);
       if(sm) sm.value = m.value;
-      /* 只有批量选「延迟确认」才覆写延迟分钟；改成人工 / 提交即确认时保留各店原值 */
-      if(sd && d && m.value==='delay') sd.value = d.value;
+      /* 批量切人工 / 提交即确认：延迟分钟同步重置为 0；仅批量选延迟确认才覆写分钟，下拉项仍为 5/15/30 */
+      if(sd){
+        if(m.value==='delay') sd.value = (d && AC_DELAY_OPTIONS.indexOf(parseInt(d.value,10))>=0) ? d.value : String(AC_DEFAULT.delay);
+        else sd.value = '';
+      }
       acRowSync(s.id);
     });
     toast('已把「'+AC_MODES[m.value].t+'」填入 '+STORES.length+' 家门店，请点保存设置');
@@ -8017,7 +8067,7 @@ def('C06','报价单详情','询价与报价', ()=>{
       const d = document.getElementById('acd-'+s.id);
       const n = document.getElementById('acn-'+s.id);
       if(m) m.value = AC_DEFAULT.mode;
-      if(d) d.value = String(AC_DEFAULT.delay);
+      if(d) d.value = '';   /* 默认人工确认 → 延迟分钟 0 */
       if(n) n.checked = AC_DEFAULT.notify;
       acRowSync(s.id);
     });
@@ -8032,9 +8082,13 @@ def('C06','报价单详情','询价与报价', ()=>{
       const d = document.getElementById('acd-'+s.id);
       const n = document.getElementById('acn-'+s.id);
       const c = acCfg(s.id);
+      const mode = m ? m.value : c.mode;
+      const isDelay = mode==='delay';
       next[s.id] = {
-        mode: m ? m.value : c.mode,
-        delay: d ? (parseInt(d.value,10)||AC_DEFAULT.delay) : c.delay,
+        mode: mode,
+        delay: isDelay
+          ? (d && AC_DELAY_OPTIONS.indexOf(parseInt(d.value,10))>=0 ? parseInt(d.value,10) : AC_DEFAULT.delay)
+          : AC_DELAY_NONE,
         notify: n ? n.checked : c.notify
       };
     });
@@ -8055,9 +8109,12 @@ def('C06','报价单详情','询价与报价', ()=>{
           <td><select class="select" id="acm-${s.id}" style="width:100%;min-width:164px" onchange="acRowSync('${s.id}')">
             ${Object.keys(AC_MODES).map(k=>`<option value="${k}" ${c.mode===k?'selected':''}>${AC_MODES[k].t}</option>`).join('')}
           </select></td>
-          <td><select class="select" id="acd-${s.id}" style="width:100%;min-width:92px" onchange="acRowSync('${s.id}')" ${c.mode==='delay'?'':'disabled'}>
-            ${AC_DELAY_OPTIONS.map(n=>`<option value="${n}" ${c.delay===n?'selected':''}>${n} 分钟</option>`).join('')}
-          </select></td>
+          <td>
+            <select class="select" id="acd-${s.id}" style="width:100%;min-width:92px;${c.mode==='delay'?'':'display:none'}" onchange="acRowSync('${s.id}')" ${c.mode==='delay'?'':'disabled'}>
+              ${AC_DELAY_OPTIONS.map(n=>`<option value="${n}" ${c.mode==='delay'&&c.delay===n?'selected':''}>${n} 分钟</option>`).join('')}
+            </select>
+            <span id="acz-${s.id}" class="input mono" style="display:${c.mode==='delay'?'none':'inline-flex'};align-items:center;box-sizing:border-box;background:#FAFBFC;color:var(--text-3);cursor:not-allowed" title="人工确认 / 提交即自动确认时不设延迟">0</span>
+          </td>
           <td class="c"><label class="chk" style="font-size:12.5px"><input type="checkbox" id="acn-${s.id}" ${c.notify?'checked':''} ${c.mode==='manual'?'disabled':''}> 通知门店</label></td>
           <td><span class="tag ${st.cls}" id="acs-${s.id}">${st.t}</span></td>
         </tr>`;
@@ -8115,12 +8172,13 @@ def('C06','报价单详情','询价与报价', ()=>{
         <div class="card-hd" style="padding:0 0 14px;border-bottom:none"><h3>批量套用</h3></div>
         <div class="field"><label>把同一种方式应用到全部门店</label>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <select class="select" id="ac-batch-mode" style="width:190px" onchange="document.getElementById('ac-batch-delay').disabled=this.value!=='delay'">
+            <select class="select" id="ac-batch-mode" style="width:190px" onchange="acBatchModeSync()">
               ${Object.keys(AC_MODES).map(k=>`<option value="${k}">${AC_MODES[k].t}</option>`).join('')}
             </select>
-            <select class="select" id="ac-batch-delay" style="width:104px" disabled>
+            <select class="select" id="ac-batch-delay" style="width:104px;display:none" disabled>
               ${AC_DELAY_OPTIONS.map(n=>`<option value="${n}">${n} 分钟</option>`).join('')}
             </select>
+            <span id="acz-batch" class="input mono" style="width:104px;display:inline-flex;align-items:center;box-sizing:border-box;background:#FAFBFC;color:var(--text-3);cursor:not-allowed" title="人工确认 / 提交即自动确认时不设延迟">0</span>
             <button class="btn btn-default" onclick="acBatchApply()">应用到全部门店</button>
           </div>
         </div>
@@ -8392,7 +8450,7 @@ def('C06','报价单详情','询价与报价', ()=>{
           <div><dt>采购门店 / 档口</dt><dd>${sh.store} · ${sh.stall}</dd></div>
           <div><dt>配送时间</dt><dd class="mono">${shipTimeText(sh)}</dd></div>
           <div><dt>发货人</dt><dd>${sh.shipper||SHIP_META.shipper}</dd></div>
-          <div><dt>联系电话</dt><dd class="mono">${sh.phone||SHIP_META.phone}</dd></div>
+          <div><dt>联系电话</dt><dd class="mono">${unmaskPhone(sh.phone||SHIP_META.phone)}</dd></div>
           <div><dt>建单方式</dt><dd>系统自动生成 · 一个订单只发一次</dd></div>
           <div><dt>创建时间</dt><dd class="mono">${sh.createdAt||'—'}</dd></div>
           <div><dt>确认发货时间</dt><dd class="mono">${sh.dispatchedAt||'—'}</dd></div>
@@ -11944,7 +12002,7 @@ D01:[
 ],
 D12:[
 ["自动确认触发范围",'服务端接单规则：开启后门店提交直采订单自动确认，不产生新订单，也不替门店下单。'],
-["按门店配置",'配置维度为<b>门店</b>，按订单所属门店取规则，一店一条，各店规则互不干扰。<b>总开关</b>仅作急停用：关闭后全部门店按人工确认，各店配置保留。'],
+["按门店配置",'配置维度为<b>门店</b>，按订单所属门店取规则，一店一条，各店规则互不干扰。<b>总开关</b>仅作急停用：关闭后全部门店按人工确认，各店配置保留。接单方式选<b>人工确认 / 提交即自动确认</b>时，延迟分钟自动重置为 <b>0</b> 并只读；延迟下拉固定 <b>5 / 15 / 30</b> 分钟、不含 0，切回延迟方式恢复默认 15 分钟。'],
 ["不回溯历史待确认单",'配置只对生效后新提交订单生效；已挂起的待确认单仍需人工处理。改回人工或关闭总开关时，该店未执行的延迟任务取消。'],
   ["状态字段与流转来源",'门店提交直采单进入「待确认」，确认接单或询价中标后进入「已确认」。<b>门店端与供应端共用同一状态字段</b>；自动确认与人工确认在履约、结算、打印上无差异，仅在流转记录标注来源。'],
 ["自动建单路径",'订单推进为「已确认」时自动生成唯一待发货单；询价中标订单在中标生成时自动建单。自动建单覆盖三类路径，不依赖人工补建。'],
@@ -12127,7 +12185,7 @@ E02:[
   ["预填与核对","发货单在订单确认 / 中标生成时创建，<b>商品行取关联订单，不共用其他单演示数据</b>；实发量按<b>下单量（足量）</b>预填，「预估备货量」列显示缺口，「本行不发」按实际勾选。已保存单原样带回，填写与二次修改为同一处。<b>本期不设阈值、不算偏差、不做浮差判定</b>。"],
   ["本行不发与备注","整行不供勾选「本行不发」，实发量输入框锁定；逐行备注选填。<b>未勾「本行不发」且实发量未填 / 为 0 / 带小数</b>不允许提交：输入框红框、整行浅红底，补齐或勾选后放行。实发合计随填写实时变化，确认发货后随单锁定。"],
   ["保存行级校验","点「保存 / 保存并返回 / 保存并查看发货单」逐行检查：<b>未勾「本行不发」且实发量未填 / 为 0 / 非整件数</b>则不允许提交，顶部列出问题行号，输入框红框并提示「请填 >0 的整件数」。补齐后红框消失，保存成功才写保存时间，状态仍「待发货」；离开本页静默暂存不写保存时间、不算已核对。"],
-  ["发货人信息","发货人默认<b>当前登录账号姓名</b>，联系电话默认<b>该账号绑定手机号</b>；不设「联系人」下拉、不预填门店收货联系人。两字段可改，<b>以确认发货时填写为准</b>。"],
+  ["发货人信息","发货人默认<b>当前登录账号姓名</b>，联系电话默认<b>该账号绑定手机号</b>；不设「联系人」下拉、不预填门店收货联系人。两字段可改，<b>以确认发货时填写为准</b>。<b>联系电话必填</b>，清空不允许保存；在 E02 / E04 <b>显示完整号码、不做脱敏</b>。"],
   ["发货日期只读","系统按关联订单<b>配送日期</b>建单时带入<b>发货日期</b>，供应端<b>不可修改</b>：E02 只读展示，保存不采集、不写回，且兜底校正回订单配送日期。该日期是<b>食安报告有效期自动关联的判定基准</b>；变更配送日期只能由门店在订单侧发起。"],
   ["送达时间","发货日期后为<b>送达时间</b>，时间选择器填至<b>时:分</b>，可留空。表示<b>当天实际到店时刻</b>，仅挂发货单，不写订单、不参与金额、不作为筛选维度；保存后 E01「配送时间」、E04 与 K05 同步显示，确认发货后锁定。留空时仅显示配送日期。此处只补时刻、不改日期。"],
   ["无新增商品行","订单为承诺，发货仅在承诺范围内落数；多出的货无预算、无验收标准、无法结算，<b>本屏不留空白行</b>。"],
@@ -12136,7 +12194,7 @@ E02:[
 
 E04:[
   ["食安报告状态","与 E02 同一明细表、同一最右列，标签颜色：<b>蓝色 = 有效期自动关联</b>、<b>橙色 = 已发货后补传</b>、绿色 = 发货前人工关联。<b>待发货态本页报告只读</b>：系统已按 <b>pid</b> 与发货日期有效期自动关联，不提供关联 / 上传入口，补充统一在 <b>E02 发货明细行内</b>完成；流转记录增「系统自动关联食安报告 · N 份」。确认发货后才在 E04 行内出现「＋ 补传报告」，可搜索或新增上传。已发货<b>只追加、不替换</b>，已关联项只读、不显示解绑；补传走独立写入口，不改数量 / 金额 / 时间 / 状态 / 送货单，仅流转记录增「补传食安报告 · N 份」。<b>订单 / 发货单已关闭时整列只读，不提供补传入口</b>，写入层同步拦截。不单列右栏报告卡片。"],
-  ["数据来源","发货单号、关联订单、门店、配送时间（配送日期 + 选填送达时间）、发货人 / 电话、<b>建单方式（系统自动生成）</b>、创建与确认发货时间、逐行实发量与备注，均取自发货物单，非写死样例。<b>发货前显示当前可改内容，确认后显示锁定快照</b>；流转记录首条为「系统自动生成发货单」并带出最近保存时间。从 E01 或 D02 进入显示各自单据。"],
+  ["数据来源","发货单号、关联订单、门店、配送时间（配送日期 + 选填送达时间）、发货人 / 电话、<b>建单方式（系统自动生成）</b>、创建与确认发货时间、逐行实发量与备注，均取自发货物单，非写死样例。<b>发货前显示当前可改内容，确认后显示锁定快照</b>；联系电话在本页与 E02 <b>显示完整号码、不做脱敏</b>；流转记录首条为「系统自动生成发货单」并带出最近保存时间。从 E01 或 D02 进入显示各自单据。"],
   ["核对前不给确认发货","明细显示关联订单商品行与预填下单量；<b>未核对保存前本页仅提供「修改发货信息」</b>，不提供「确认发货」、不生成送货单。按实际出库核对保存后才出现确认发货按钮。"],
   ["确认后只读","数量、备注、时间在确认发货时锁定，之后只读；本屏不提供线上更正 / 重开入口，更正走线下运营。逐行备注原文打印在送货单上。"],
   ["送货单生成","未发货单无送货单，打印按钮提示「未生成」。确认发货时按冻结的实发量与备注生成随货同行联，单号沿用发货单号，本页与 K05 打印预览均可打开。"],
