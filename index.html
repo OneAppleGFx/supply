@@ -9062,7 +9062,7 @@ function reportPreview(id){
     </div>
     ${reportThumbs(r.files,99,r.id)}
     <div class="hint" style="margin-top:8px">共 ${r.files.length} 个文件</div>
-    ${r.del?`<div class="hint" style="color:var(--danger);margin-top:6px">作废于 ${r.voidAt} · ${r.voidBy} · ${r.voidReason}；历史引用仍可查</div>`:''}
+    ${r.del?`<div class="hint" style="color:var(--danger);margin-top:6px">作废于 ${r.voidAt} · ${r.voidBy}</div>`:''}
     ${reportUsageHTML(r)}`,
     `<button class="btn btn-default" onclick="closeModal()">关闭</button>`, true);
 }
