@@ -8465,7 +8465,6 @@ def('C06','报价单详情','询价与报价', ()=>{
           ? `<div class="dl four">
                <div><dt>送货单号</dt><dd class="mono">${dn.no}</dd></div>
                <div><dt>生成时间</dt><dd class="mono">${dn.generatedAt}</dd></div>
-               <div><dt>随货联次</dt><dd>一式两联 · 第 1 联供应商存</dd></div>
                <div><dt>随货行数</dt><dd>${dn.lines} 行 · ${money(dn.amt)}</dd></div>
              </div>
              <div class="hint" style="margin-top:12px">逐行备注原文打印在送货单上；<span class="link" onclick="goK05('E04')">查看 / 打印送货单</span></div>`
@@ -9042,13 +9041,12 @@ function reportUsageHTML(r){
       <td class="mono">${t||'—'}<div class="hint" style="font-size:11px">${tTip}</div></td></tr>`;
   }).join('');
   return `<div class="card pad0" style="margin-top:14px">
-      <div class="card-hd"><h3 style="font-size:13px">引用情况 <span class="sub">${ships.length} 张发货单 · ${ls.length} 条引用</span></h3>
-        <span class="hint">按报告反查：随哪张单、发给哪个门店、哪一行商品、什么时候发出</span></div>
+      <div class="card-hd"><h3 style="font-size:13px">引用情况</h3></div>
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>发货单</th><th>门店</th><th>商品 / pid</th><th>发货时间</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <div class="sum-bar"><span>共 ${ls.length} 条引用</span><span>覆盖 ${ships.length} 张发货单</span>
-        <span style="margin-left:auto">已发货单取确认发货时间，待发货单取配送时间</span></div></div>`;
+        </div></div>`;
 }
 /* 函数名保留 reportPreview 以兼容既有深链 / 探针，UI 文案统一为「报告详情」。 */
 function reportPreview(id){
@@ -9063,9 +9061,8 @@ function reportPreview(id){
       <div><dt>自动关联判定</dt><dd class="hint">按各发货单的发货日期是否落在有效期内</dd></div>
     </div>
     ${reportThumbs(r.files,99,r.id)}
-    <div class="hint" style="margin-top:8px">共 ${r.files.length} 个文件（图片与文件混排，不做类型区分）</div>
+    <div class="hint" style="margin-top:8px">共 ${r.files.length} 个文件</div>
     ${r.del?`<div class="hint" style="color:var(--danger);margin-top:6px">作废于 ${r.voidAt} · ${r.voidBy} · ${r.voidReason}；历史引用仍可查</div>`:''}
-    <div class="hint" style="margin-top:10px">已被引用 ${linksOfReport(id).length} 次。报告一旦被引用即不可修改内容，需要更正请在 E02 / E04 明细行内重新上传一份。</div>
     ${reportUsageHTML(r)}`,
     `<button class="btn btn-default" onclick="closeModal()">关闭</button>`, true);
 }
