@@ -2211,8 +2211,7 @@ def('C07','中标结果','询价与报价', ()=>{
       <td class="mono r" style="color:var(--text-4)">—</td>
       <td>${tag(l.none?'不可供':'未中标','off')}</td></tr>`).join('');
 
-  const btns = `<button class="btn btn-default" onclick="toast('已导出中标明细')">${I.down}导出</button>
-       ${q.st==='已提交'?`<button class="btn btn-default" onclick="openEdit('${q.rfq}')">修改报价（截止前）</button>`:''}
+  const btns = `${q.st==='已提交'?`<button class="btn btn-default" onclick="openEdit('${q.rfq}')">修改报价（截止前）</button>`:''}
        ${winN>0?`<button class="btn btn-primary" onclick="go('D01')">查看正式订单</button>`:''}`;
 
   return pagehd('中标结果',
@@ -4547,7 +4546,7 @@ def('K08','报价单打印','全局', ()=>{
     </tr>`).join('');
   return pagehd('报价单打印预览',
       `${q.no} · A4 纵向 · 单联 · 只读快照`,
-      `${backBtn}<button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
+      `${backBtn}<button class="btn btn-default" onclick="toast('已下载 PDF')">${I.down}下载 PDF</button><button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
       tag(q.st, q.cls)) +
   `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">
      本页按报价单 <b class="mono">${q.no}</b> 的提交快照出具：单价锁定，不随当前货品价格变化。${hideRes?'询价截止并由门店确认前，纸件不显示中标结果。':''}
@@ -4608,7 +4607,7 @@ def('K09','采购订单打印','全局', ()=>{
   const type = o.type==='plan' ? '中标订单' : '门店直采单';
   return pagehd('采购订单打印预览',
       `${o.no} · A4 纵向 · 单联 · ${type}`,
-      `${backBtn}<button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
+      `${backBtn}<button class="btn btn-default" onclick="toast('已下载 PDF')">${I.down}下载 PDF</button><button class="btn btn-primary" onclick="toast('已发送到打印队列')">${I.print}打印</button>`,
       stTag(o.st)) +
   `<div class="card" style="margin-bottom:12px;padding:12px 18px;font-size:13px;color:var(--text-2)">
      本页按订单 <b class="mono">${o.no}</b> 出具：下单量按包装单位整件计数，金额由明细派生，与订单详情 / 发货 / 验收 / 对账同源；<b>不替代送货单</b>。
